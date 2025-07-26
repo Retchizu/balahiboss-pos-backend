@@ -1,3 +1,4 @@
+
 import { auth } from "@/config/firebaseConfig";
 import { NextFunction, Request, Response } from "express";
 import { FirebaseAuthError } from "firebase-admin/auth";
@@ -15,19 +16,16 @@ export const verifyAuthToken = async (req: Request, res: Response, next: NextFun
     } catch (error) {
         switch ((error as FirebaseAuthError).code) {
         case "auth/id-token-expired":
-            res.status(401).json({ message: "Token expired. Please sign in again." });
-            break;
+            return res.status(401).json({ message: "Token expired. Please sign in again." });
+
         case "auth/argument-error":
-            res.status(400).json({ message: "Invalid token format." });
-            break;
+            return res.status(400).json({ message: "Invalid token format." });
         case "auth/user-disabled":
-            res.status(403).json({ message: "User account is disabled." });
-            break;
+            return res.status(403).json({ message: "User account is disabled." });
         case "auth/user-not-found":
-            res.status(404).json({ message: "User not found." });
-            break;
+            return res.status(404).json({ message: "User not found." });
         default:
-            res.status(500).json({ message: `Authentication failed: ${(error as Error).message}`});
+            return res.status(500).json({ message: `Authentication failed: ${(error as Error).message}`});
         }
     }
 };

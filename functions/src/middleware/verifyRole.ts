@@ -12,7 +12,7 @@ export const verifyRole = (requiredRoles: string[]) => {
             }
             return next();
         } catch (error) {
-            res.status(500).json({message: `Authentication failed ${(error as Error).message}`});
+            return res.status(500).json({message: `Authentication failed ${(error as Error).message}`});
         }
     };
 };
