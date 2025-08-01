@@ -21,7 +21,7 @@ export const getProducts = async (req: Request, res: Response) => {
     try {
         const productsRef = realtimeDb.ref("products");
         const products = await productsRef.get();
-        console.log(products.val());
+        console.log("get products");
         return res.status(200).json({items: products.val()});
     } catch (error) {
         return res.status(500).json({
