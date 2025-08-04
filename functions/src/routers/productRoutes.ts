@@ -1,3 +1,4 @@
+/* eslint-disable max-len */
 import { addProduct, deleteProduct, getProducts, updateProduct } from "@/controllers/productController";
 import { Router } from "express";
 import { verifyAuthToken } from "@/middleware/verifyAuthToken";

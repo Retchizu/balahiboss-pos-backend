@@ -58,7 +58,6 @@ export const getTransactions = async (req: Request, res: Response) => {
             .where("date", "<=", endIso);
 
         const transactions = await transactionRef.get();
-        console.log(transactions.docs);
         return res.status(200).json({
             items: transactions.docs.map((doc) => doc.data()),
         });
