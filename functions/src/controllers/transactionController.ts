@@ -58,8 +58,12 @@ export const getTransactions = async (req: Request, res: Response) => {
             .where("date", "<=", endIso);
 
         const transactions = await transactionRef.get();
+
         return res.status(200).json({
-            items: transactions.docs.map((doc) => doc.data()),
+            items: transactions.docs.map((doc) => ({
+                id: doc.id,
+                ...doc.data(),
+            })),
         });
     } catch (error) {
         return res.status(500).json({
