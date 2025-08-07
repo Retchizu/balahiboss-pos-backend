@@ -73,13 +73,69 @@ export const getTransactions = async (req: Request, res: Response) => {
     }
 };
 
+type Item = {
+  productId: string;
+  quantity: number;
+};
+
+const getItemMap = (items: Item[]): Map<string, number> => {
+    const map = new Map<string, number>();
+    for (const item of items) {
+        map.set(item.productId, item.quantity);
+    }
+    return map;
+};
+
 export const updateTransaction = async (req: Request, res: Response) => {
     try {
-        const {transactionId} = req.params;
-        const transactionBody = transactionSchema.parse(req.body);
+        const { transactionId } = req.params;
+        const transactionBody = transactionSchema.parse(req.body); // new transaction body
+        const newItems: Item[] = transactionBody.items;
+
         const transactionRef = firestoreDb.collection("transactions").doc(transactionId);
+        const existingDoc = await transactionRef.get();
+
+        if (!existingDoc.exists) {
+            return res.status(404).json({ message: "Transaction not found" });
+        }
+
+        const existingData = existingDoc.data();
+        const oldItems: Item[] = existingData?.items || [];
+
+        const oldItemMap = getItemMap(oldItems);
+        const newItemMap = getItemMap(newItems);
+
+        // Set of all involved productIds
+        const productIds = new Set<string>([
+            ...oldItemMap.keys(),
+            ...newItemMap.keys(),
+        ]);
+
+        const updates = [];
+
+        for (const productId of productIds) {
+            const oldQty = oldItemMap.get(productId) || 0;
+            const newQty = newItemMap.get(productId) || 0;
+            const diff = newQty - oldQty;
+
+            if (diff !== 0) {
+                const productStockRef = realtimeDb.ref(`products/${productId}/stock`);
+
+                updates.push(
+                    productStockRef.transaction((currentStock: number) => {
+                        if (typeof currentStock !== "number") currentStock = 0;
+                        return currentStock - diff;
+                    })
+                );
+            }
+        }
+
+        await Promise.all(updates);
         await transactionRef.update(transactionBody);
-        return res.status(200).json({message: "Transaction updated successfully"});
+
+        return res
+            .status(200)
+            .json({ message: "Transaction updated successfully" });
     } catch (error) {
         return res.status(500).json({message: "Failed to update transaction", error: (error as Error).message});
     }
@@ -90,6 +146,27 @@ export const deleteTransaction = async (req: Request, res: Response) => {
     try {
         const {transactionId} = req.params;
         const transactionRef = firestoreDb.collection("transactions").doc(transactionId);
+
+        const existingDoc = await transactionRef.get();
+        if (!existingDoc.exists) {
+            return res.status(404).json({message: "Transaction does not exists"});
+        }
+        const existingData = existingDoc.data();
+        const items: Item[] = existingData?.items || [];
+        const itemMap = getItemMap(items);
+        const productIds = itemMap.keys();
+
+        const updates = [];
+        for (const productId of productIds) {
+            const productQty = itemMap.get(productId) || 0;
+            const productStockRef = realtimeDb.ref(`products/${productId}/stock`);
+            updates.push(
+                productStockRef.transaction((currentStock: number) => {
+                    return currentStock + productQty;
+                })
+            );
+        }
+        await Promise.all(updates);
         await transactionRef.delete();
         return res.status(200).json({message: "Transaction deleted successfully"});
     } catch (error) {
