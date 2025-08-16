@@ -1,4 +1,5 @@
 import { firestoreDb, realtimeDb } from "@/config/firebaseConfig";
+import recordLog from "@/utils/recordLog";
 import { transactionSchema } from "@/zod-schemas/transactionSchema";
 import { endOfDay, startOfDay } from "date-fns";
 import { toZonedTime, fromZonedTime } from "date-fns-tz";
@@ -37,6 +38,15 @@ export const addTransaction = async (req: Request, res: Response) => {
                 date: new Date().toISOString(),
             });
         }
+
+        await recordLog(
+            "transaction",
+            transaction.id,
+            "CREATE",
+            req.user!.uid,
+            null,
+            transactionBody
+        );
         return res.status(200).json({message: "Transaction added successfully"});
     } catch (error) {
         return res.status(500).json({message: "Invalid transaction", error: (error as Error).message});
@@ -166,7 +176,18 @@ export const updateTransaction = async (req: Request, res: Response) => {
         }
 
         await Promise.all(updates);
+        const beforeSnapshot = existingData;
+
         await transactionRef.update(transactionBody);
+
+        await recordLog(
+            "transaction",
+            transactionId,
+            "UPDATE",
+            req.user!.uid,
+            beforeSnapshot,
+            transactionBody // after snapshot
+        );
 
         // if sending to an employee in pending orders
         if (transactionBody.pending) {
@@ -229,6 +250,15 @@ export const deleteTransaction = async (req: Request, res: Response) => {
         }
 
         await Promise.all(updates);
+
+        await recordLog(
+            "transaction",
+            transactionId,
+            "DELETE",
+            req.user!.uid,
+            existingData,
+            null
+        );
         await transactionRef.delete();
         return res.status(200).json({message: "Transaction deleted successfully"});
     } catch (error) {
