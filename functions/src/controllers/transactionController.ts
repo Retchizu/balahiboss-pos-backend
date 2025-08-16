@@ -1,56 +1,88 @@
 import { firestoreDb, realtimeDb } from "@/config/firebaseConfig";
 import { transactionSchema } from "@/zod-schemas/transactionSchema";
+import { endOfDay, startOfDay } from "date-fns";
+import { toZonedTime, fromZonedTime } from "date-fns-tz";
 import { Request, Response } from "express";
 
 export const addTransaction = async (req: Request, res: Response) => {
     try {
         const transactionBody = transactionSchema.parse(req.body);
         const transactionRef = firestoreDb.collection("transactions");
-        await transactionRef.add(transactionBody);
+        const transaction = await transactionRef.add(transactionBody);
 
         // product logic after transaction
-        const updatePromises = transactionBody.items.map(async (transaction) => {
-            const productId = transaction.productId;
+        const updatePromises = transactionBody.items.map(async (item) => {
+            const productId = item.productId;
             const productRef = realtimeDb.ref(`products/${productId}`);
             const productSnapshot = await productRef.get();
             const product = productSnapshot.val();
 
             if (!product) throw new Error(`Product ${productId} not found`);
 
-            const newQuantity = product.stock - transaction.quantity;
+            const newQuantity = product.stock - item.quantity;
             if (newQuantity < 0) throw new Error(`Insufficient stock for product ${productId}`);
 
             await productRef.update({ stock: newQuantity });
         });
 
         await Promise.all(updatePromises);
+
+        // if sending to an employee in pending orders
+        if (transactionBody.pending) {
+            const pendingOrderRef = realtimeDb.ref(`pendingOrders/${transaction.id}`);
+            await pendingOrderRef.set({
+                transaction: transactionBody,
+                orderInformation: transactionBody.orderInformation || "",
+                complete: false,
+                date: new Date().toISOString(),
+            });
+        }
         return res.status(200).json({message: "Transaction added successfully"});
     } catch (error) {
-        return res.status(400).json({message: "Invalid transaction body", error: (error as Error).message});
+        return res.status(500).json({message: "Invalid transaction", error: (error as Error).message});
     }
+};
+
+export const toPHTRange = (start?: string, end?: string) => {
+    const timeZone = "Asia/Manila"; // PHT
+
+    let startDate: Date;
+    let endDate: Date;
+
+    if (start && end) {
+        startDate = new Date(start);
+        endDate = new Date(end);
+    } else {
+        const now = new Date();
+        startDate = now;
+        endDate = now;
+    }
+
+    // Step 1: Convert to PHT time
+    const startInPht = toZonedTime(startDate, timeZone);
+    const endInPht = toZonedTime(endDate, timeZone);
+
+    // Step 2: Get start/end of the PHT day
+    const startPhtDay = startOfDay(startInPht);
+    const endPhtDay = endOfDay(endInPht);
+
+    // Step 3: Convert back to UTC for Firestore queries
+    const startUtc = fromZonedTime(startPhtDay, timeZone);
+    const endUtc = fromZonedTime(endPhtDay, timeZone);
+
+    return {
+        startIso: startUtc.toISOString(),
+        endIso: endUtc.toISOString(),
+    };
 };
 
 export const getTransactions = async (req: Request, res: Response) => {
     try {
-        const { startDate, endDate } = req.query;
+        const startDate = typeof req.query.startDate === "string" ? req.query.startDate : undefined;
+        const endDate = typeof req.query.endDate === "string" ? req.query.endDate : undefined;
 
-        let startObj: Date;
-        let endObj: Date;
-
-        if (startDate && endDate) {
-            startObj = new Date(startDate as string);
-            endObj = new Date(endDate as string);
-            endObj.setHours(23, 59, 59, 999);
-        } else {
-            const now = new Date();
-            startObj = new Date(now);
-            startObj.setHours(0, 0, 0, 0);
-            endObj = new Date(now);
-            endObj.setHours(23, 59, 59, 999);
-        }
-
-        const startIso = startObj.toISOString();
-        const endIso = endObj.toISOString();
+        const {startIso, endIso} = toPHTRange(startDate, endDate);
+        console.log(startIso, endIso);
 
         const transactionRef = firestoreDb
             .collection("transactions")
@@ -89,6 +121,9 @@ const getItemMap = (items: Item[]): Map<string, number> => {
 export const updateTransaction = async (req: Request, res: Response) => {
     try {
         const { transactionId } = req.params;
+        if (!transactionId) {
+            return res.status(400).json({ message: "transactionId is required" });
+        }
         const transactionBody = transactionSchema.parse(req.body); // new transaction body
         const newItems: Item[] = transactionBody.items;
 
@@ -133,6 +168,22 @@ export const updateTransaction = async (req: Request, res: Response) => {
         await Promise.all(updates);
         await transactionRef.update(transactionBody);
 
+        // if sending to an employee in pending orders
+        if (transactionBody.pending) {
+            const pendingOrderRef = realtimeDb.ref(`pendingOrders/${transactionId}`);
+            const pendingOrder = await pendingOrderRef.get();
+
+            if (!pendingOrder.exists()) {
+                return res.status(404).json({message: "pendingOrder not found"});
+            }
+            await pendingOrderRef.set({
+                transaction: transactionBody,
+                orderInformation: transactionBody.orderInformation || "",
+                complete: pendingOrder.val().complete,
+                date: new Date().toISOString(),
+            });
+        }
+
         return res
             .status(200)
             .json({ message: "Transaction updated successfully" });
@@ -145,6 +196,9 @@ export const updateTransaction = async (req: Request, res: Response) => {
 export const deleteTransaction = async (req: Request, res: Response) => {
     try {
         const {transactionId} = req.params;
+        if (!transactionId) {
+            return res.status(400).json({ message: "transactionId is required" });
+        }
         const transactionRef = firestoreDb.collection("transactions").doc(transactionId);
 
         const existingDoc = await transactionRef.get();
@@ -166,6 +220,14 @@ export const deleteTransaction = async (req: Request, res: Response) => {
                 })
             );
         }
+
+        const pendingOrderRef = realtimeDb.ref(`pendingOrders/${transactionId}`);
+        const pendingOrder = await pendingOrderRef.get();
+
+        if (pendingOrder.exists()) {
+            await pendingOrderRef.remove();
+        }
+
         await Promise.all(updates);
         await transactionRef.delete();
         return res.status(200).json({message: "Transaction deleted successfully"});
