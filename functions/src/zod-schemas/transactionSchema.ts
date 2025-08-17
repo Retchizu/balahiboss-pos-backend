@@ -5,7 +5,6 @@ const productTransactionSchema = object({
     quantity: number().min(0.5, {message: "Quantity is required"}),
 });
 
-
 export const transactionSchema = object({
     customerId: string().min(1, {message: "Customer ID is required"}),
     items: array(productTransactionSchema),

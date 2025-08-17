@@ -34,7 +34,7 @@ export const addTransaction = async (req: Request, res: Response) => {
             await pendingOrderRef.set({
                 transaction: transactionBody,
                 orderInformation: transactionBody.orderInformation || "",
-                complete: false,
+                status: "pending",
                 date: new Date().toISOString(),
             });
         }
@@ -194,15 +194,14 @@ export const updateTransaction = async (req: Request, res: Response) => {
             const pendingOrderRef = realtimeDb.ref(`pendingOrders/${transactionId}`);
             const pendingOrder = await pendingOrderRef.get();
 
-            if (!pendingOrder.exists()) {
-                return res.status(404).json({message: "pendingOrder not found"});
-            }
-            await pendingOrderRef.set({
+            const newPendingOrderData = {
                 transaction: transactionBody,
-                orderInformation: transactionBody.orderInformation || "",
-                complete: pendingOrder.val().complete,
+                orderInformation: transactionBody.orderInformation,
+                status: pendingOrder.exists() ? pendingOrder.val().status : "pending",
                 date: new Date().toISOString(),
-            });
+            };
+
+            await pendingOrderRef.set(newPendingOrderData);
         }
 
         return res
