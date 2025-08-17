@@ -40,10 +40,37 @@ const getChanges = <T>(
     if (before && after) {
         for (const key in after) {
             if (Object.prototype.hasOwnProperty.call(after, key)) {
-                if (before[key as keyof T] !== after[key as keyof T]) {
+                const beforeVal = before[key as keyof T];
+                const afterVal = after[key as keyof T];
+
+                let isChanged = false;
+
+                // Special case: Transactions -> items array [{ productId, quantity }]
+                if (
+                    key === "items" &&
+                    Array.isArray(beforeVal) &&
+                    Array.isArray(afterVal)
+                ) {
+                    if (beforeVal.length !== afterVal.length) {
+                        isChanged = true;
+                    } else {
+                        isChanged = beforeVal.some((bItem, i) => {
+                            const aItem = afterVal[i];
+                            return (
+                                bItem.productId !== aItem.productId ||
+                                bItem.quantity !== aItem.quantity
+                            );
+                        });
+                    }
+                } else {
+                    //  Fallback: shallow compare
+                    isChanged = beforeVal !== afterVal;
+                }
+
+                if (isChanged) {
                     changes[key as keyof T] = {
-                        before: before[key as keyof T],
-                        after: after[key as keyof T],
+                        before: beforeVal,
+                        after: afterVal,
                     };
                 }
             }
