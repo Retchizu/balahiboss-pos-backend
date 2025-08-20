@@ -199,6 +199,8 @@ export const updateTransaction = async (req: Request, res: Response) => {
                 orderInformation: transactionBody.orderInformation,
                 status: pendingOrder.exists() ? pendingOrder.val().status : "pending",
                 date: new Date().toISOString(),
+                checkedBy: pendingOrder.exists() ?
+                    Array.from(new Set([...pendingOrder.val().checkedBy, req.user?.uid])) : [],
             };
 
             await pendingOrderRef.set(newPendingOrderData);
