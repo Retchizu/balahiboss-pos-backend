@@ -5,6 +5,8 @@ import { Request, Response } from "express";
 import { getDownloadURL } from "firebase-admin/storage";
 import { v4 as uuidv4 } from "uuid";
 import {format} from "date-fns";
+import { FirebaseError } from "firebase-admin";
+import { ZodError } from "zod";
 
 
 export const addProduct = async (req: Request, res: Response) => {
@@ -17,13 +19,13 @@ export const addProduct = async (req: Request, res: Response) => {
         if (base64Image) {
             const matches = base64Image.match(/^data:(.+);base64,(.+)$/);
             if (!matches || matches.length !== 3) {
-                return res.status(400).json({ message: "Invalid base64 image" });
+                return res.status(400).json({ error: "Invalid base64 image" });
             }
 
             const contentType = matches[1];
 
             if (!["image/jpeg", "image/png"].includes(contentType)) {
-                return res.status(400).json({ message: "Only JPEG and PNG images are allowed" });
+                return res.status(400).json({ error: "Only JPEG and PNG images are allowed" });
             }
 
             console.log("content type", contentType); // image/jpeg or image/png
@@ -63,8 +65,23 @@ export const addProduct = async (req: Request, res: Response) => {
 
         return res.status(201).json({message: `${productName} added successfully`});
     } catch (error) {
+        console.error("AddProduct Error:", error); // full log for devs
+
+        if (error instanceof ZodError) {
+            return res.status(400).json({ error: "Invalid product data. Please check your inputs." });
+        }
+
+        if ((error as FirebaseError).code === "storage/unauthorized") {
+            return res.status(403).json({ error: "You don’t have permission to upload this image." });
+        }
+
+        if ((error as FirebaseError).code === "storage/quota-exceeded") {
+            return res.status(507).json({ error: "Storage limit reached. Please try again later." });
+        }
+
+        // Default catch-a
         return res.status(500).json({
-            message: `Failed to add products: ${(error as Error).message}`,
+            error: "Something went wrong while adding the product. Please try again later.",
         });
     }
 };
@@ -109,7 +126,7 @@ export const updateProduct = async (req: Request, res: Response) => {
         const { productId } = req.params;
 
         if (!productId) {
-            return res.status(400).json({ message: "Product ID is required" });
+            return res.status(400).json({ error: "Product ID is required" });
         }
 
         // 2. Get product reference from Realtime DB
@@ -117,7 +134,7 @@ export const updateProduct = async (req: Request, res: Response) => {
         const product = await productRef.get();
 
         if (!product.exists()) {
-            return res.status(404).json({ message: "Product not found" });
+            return res.status(404).json({ error: "Product not found" });
         }
 
         // Snapshot of current product before update
@@ -159,7 +176,7 @@ export const updateProduct = async (req: Request, res: Response) => {
             // 4b. Validate and upload new base64 image
             const matches = base64Image.match(/^data:(.+);base64,(.+)$/);
             if (!matches || matches.length !== 3) {
-                return res.status(400).json({ message: "Invalid base64 image" });
+                return res.status(400).json({ error: "Invalid base64 image" });
             }
 
             const contentType = matches[1]; // e.g. "image/png"
@@ -204,9 +221,22 @@ export const updateProduct = async (req: Request, res: Response) => {
             message: `${updateProductBody.productName} updated successfully`,
         });
     } catch (error) {
-        // Catch-all error handling
+        console.error("UpdateProduct Error:", error);
+
+        if (error instanceof ZodError) {
+            return res.status(400).json({ error: "Invalid product data. Please check your inputs." });
+        }
+
+        if ((error as FirebaseError).code === "storage/unauthorized") {
+            return res.status(403).json({ error: "You don’t have permission to upload this image." });
+        }
+
+        if ((error as FirebaseError).code === "storage/quota-exceeded") {
+            return res.status(507).json({ error: "Storage limit reached. Please try again later." });
+        }
+
         return res.status(500).json({
-            message: `Failed to update product: ${(error as Error).message}`,
+            error: "Something went wrong while updating the product. Please try again later.",
         });
     }
 };
@@ -217,7 +247,7 @@ export const deleteProduct = async (req: Request, res: Response) => {
         const { productId } = req.params;
         if (!productId) {
             return res.status(400).json({
-                message: "Product ID is required",
+                error: "Product ID is required",
             });
         }
 
@@ -226,7 +256,7 @@ export const deleteProduct = async (req: Request, res: Response) => {
 
         if (!snapshot.exists()) {
             return res.status(404).json({
-                message: "Product not found",
+                error: "Product not found",
             });
         }
 
@@ -259,8 +289,18 @@ export const deleteProduct = async (req: Request, res: Response) => {
             message: `${product.productName} deleted successfully`,
         });
     } catch (error) {
+        console.error("DeleteProduct Error:", error);
+
+        if ((error as FirebaseError).code === "storage/unauthorized") {
+            return res.status(403).json({ error: "You don’t have permission to delete this product image." });
+        }
+
+        if ((error as FirebaseError).code === "storage/object-not-found") {
+            return res.status(404).json({ error: "Product image not found in storage." });
+        }
+
         return res.status(500).json({
-            message: `Failed to delete product: ${(error as Error).message}`,
+            error: "Something went wrong while deleting the product. Please try again later.",
         });
     }
 };

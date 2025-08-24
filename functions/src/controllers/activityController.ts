@@ -23,9 +23,10 @@ export const getActivityLogs = async (req: Request, res: Response) => {
             })),
         });
     } catch (error) {
+        console.error("getActivityLogs error:", error);
+
         return res.status(500).json({
-            message: "Failed to get activity logs",
-            error: (error as Error).message,
+            error: "Failed to fetch activity logs. Please try again later.",
         });
     }
 };

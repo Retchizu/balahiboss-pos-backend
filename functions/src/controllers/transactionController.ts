@@ -4,6 +4,8 @@ import { transactionSchema } from "@/zod-schemas/transactionSchema";
 import { endOfDay, startOfDay } from "date-fns";
 import { toZonedTime, fromZonedTime } from "date-fns-tz";
 import { Request, Response } from "express";
+import { FirebaseError } from "firebase-admin";
+import { ZodError } from "zod";
 
 export const addTransaction = async (req: Request, res: Response) => {
     try {
@@ -49,7 +51,34 @@ export const addTransaction = async (req: Request, res: Response) => {
         );
         return res.status(200).json({message: "Transaction added successfully"});
     } catch (error) {
-        return res.status(500).json({message: "Invalid transaction", error: (error as Error).message});
+        console.error("addTransaction error:", error);
+
+        if (error instanceof ZodError) {
+            return res.status(400).json({
+                error: "Invalid transaction data. Please check your inputs.",
+            });
+        }
+
+        if ((error as Error).message.includes("not found")) {
+            return res.status(404).json({ error: (error as Error).message });
+        }
+        if ((error as Error).message.includes("Insufficient stock")) {
+            return res.status(409).json({ error: (error as Error).message });
+        }
+
+        if ((error as FirebaseError).code === "permission-denied") {
+            return res.status(403).json({ error: "You don’t have permission to create this transaction." });
+        }
+        if ((error as FirebaseError).code === "unavailable") {
+            return res.status(503).json({ error: "Service temporarily unavailable. Please try again later." });
+        }
+        if ((error as FirebaseError).code === "resource-exhausted") {
+            return res.status(507).json({ error: "Database quota exceeded. Please contact support." });
+        }
+
+        return res.status(500).json({
+            error: "Failed to add transaction. Please try again later.",
+        });
     }
 };
 

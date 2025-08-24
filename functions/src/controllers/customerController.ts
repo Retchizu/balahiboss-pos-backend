@@ -2,6 +2,8 @@ import { realtimeDb } from "@/config/firebaseConfig";
 import recordLog from "@/utils/recordLog";
 import { customerSchema } from "@/zod-schemas/customerSchema";
 import { Request, Response } from "express";
+import { FirebaseError } from "firebase-admin";
+import { ZodError } from "zod";
 
 export const addCustomer = async (req: Request, res: Response) => {
     try {
@@ -17,7 +19,37 @@ export const addCustomer = async (req: Request, res: Response) => {
         await recordLog("customer", customer.key!, "CREATE", req.user!.uid, null, afterSnapshot);
         return res.status(201).json({message: "Customer added successfully", customer});
     } catch (error) {
-        return res.status(500).json({message: "Failed to add customer", error: (error as Error).message});
+        console.error("addCustomer error:", error);
+
+        // 🟢 Input validation error
+        if (error instanceof ZodError) {
+            return res.status(400).json({
+                error: "Invalid customer data. Please check the inputs.",
+            });
+        }
+
+        // 🟢 Firebase specific errors
+        if ((error as FirebaseError).code === "permission-denied") {
+            return res.status(403).json({
+                error: "You don’t have permission to add customers.",
+            });
+        }
+
+        if ((error as FirebaseError).code === "unavailable") {
+            return res.status(503).json({
+                error: "Service temporarily unavailable. Please try again later.",
+            });
+        }
+
+        if ((error as FirebaseError).code === "resource-exhausted") {
+            return res.status(507).json({
+                error: "Database quota exceeded. Please contact support.",
+            });
+        }
+
+        return res.status(500).json({
+            error: "Failed to add customer. Please try again later.",
+        });
     }
 };
 
@@ -37,7 +69,7 @@ export const updateCustomer = async (req: Request, res: Response) => {
         const customerRef = realtimeDb.ref(`customers/${customerId}`);
         const customer = await customerRef.get();
         if (!customer.exists()) {
-            return res.status(404).json({message: "Customer not found"});
+            return res.status(404).json({error: "Customer not found"});
         }
 
         const beforeSnapshot = customer.val();
@@ -56,7 +88,27 @@ export const updateCustomer = async (req: Request, res: Response) => {
         );
         return res.status(200).json({message: "Customer updated successfully", customer});
     } catch (error) {
-        return res.status(500).json({message: "Failed to update customer", error: (error as Error).message});
+        console.error("updateCustomer error:", error);
+
+        if (error instanceof ZodError) {
+            return res.status(400).json({
+                error: "Invalid customer data. Please check the inputs.",
+            });
+        }
+
+        if ((error as FirebaseError).code === "permission-denied") {
+            return res.status(403).json({ error: "You don’t have permission to update customers." });
+        }
+        if ((error as FirebaseError).code === "unavailable") {
+            return res.status(503).json({ error: "Service temporarily unavailable. Please try again later." });
+        }
+        if ((error as FirebaseError).code === "resource-exhausted") {
+            return res.status(507).json({ error: "Database quota exceeded. Please contact support." });
+        }
+
+        return res.status(500).json({
+            error: "Failed to update customer. Please try again later.",
+        });
     }
 };
 
@@ -66,7 +118,7 @@ export const deleteCustomer = async (req: Request, res: Response) => {
         const customerRef = realtimeDb.ref(`customers/${customerId}`);
         const customer = await customerRef.get();
         if (!customer.exists()) {
-            return res.status(404).json({message: "Customer not found"});
+            return res.status(404).json({error: "Customer not found"});
         }
 
         const beforeSnapshot = customer.val();
@@ -84,6 +136,20 @@ export const deleteCustomer = async (req: Request, res: Response) => {
 
         return res.status(200).json({message: "Customer deleted successfully"});
     } catch (error) {
-        return res.status(500).json({message: "Failed to delete customer", error: (error as Error).message});
+        console.error("deleteCustomer error:", error);
+
+        if ((error as FirebaseError).code === "permission-denied") {
+            return res.status(403).json({ error: "You don’t have permission to delete customers." });
+        }
+        if ((error as FirebaseError).code === "unavailable") {
+            return res.status(503).json({ error: "Service temporarily unavailable. Please try again later." });
+        }
+        if ((error as FirebaseError).code === "resource-exhausted") {
+            return res.status(507).json({ error: "Database quota exceeded. Please contact support." });
+        }
+
+        return res.status(500).json({
+            error: "Failed to delete customer. Please try again later.",
+        });
     }
 };

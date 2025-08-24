@@ -5,15 +5,18 @@ export const verifyRole = (requiredRoles: string[]) => {
     return async (req: Request, res: Response, next: NextFunction) => {
         try {
             if (!req.user) {
-                return res.status(401).json({message: "Unauthorized"});
+                return res.status(401).json({ error: "Unauthorized. No user context found." });
             }
             if (!requiredRoles.includes(req.user.role)) {
-                return res.status(403).json({message: "Forbidden"});
+                return res.status(403).json({ error: "Forbidden. You don’t have access to this resource." });
             }
             console.log("did run in verifyRole");
             return next();
         } catch (error) {
-            return res.status(500).json({message: `Authentication failed ${(error as Error).message}`});
+            console.error("verifyRole Error:", error);
+            return res.status(500).json({
+                error: "Role verification failed. Please try again later.",
+            });
         }
     };
 };
