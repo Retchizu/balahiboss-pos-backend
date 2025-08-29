@@ -149,6 +149,7 @@ export const updateProduct = async (req: Request, res: Response) => {
         // Track image changes
         const currentImageUrl = currentProduct.imageUrl;
         let newImageUrl = currentImageUrl;
+        let oldImageUrl = currentImageUrl;
 
         // 4. Handle image replacement (if base64 provided)
         if (base64Image) {
@@ -166,6 +167,9 @@ export const updateProduct = async (req: Request, res: Response) => {
 
                     // Copy old file → history path
                     await storage.file(oldPath).copy(storage.file(historyPath));
+                    oldImageUrl = await getDownloadURL(storage.file(historyPath));
+                    // Delete original old file
+                    await storage.file(oldPath).delete();
                 } catch (error) {
                     throw new Error(
                         `Failed to move old image to history: ${(error as Error).message}`
@@ -197,7 +201,7 @@ export const updateProduct = async (req: Request, res: Response) => {
         // 6. Prepare before/after snapshots for logging
         const beforeSnapshot = {
             ...currentProduct,
-            imageUrl: currentImageUrl,
+            imageUrl: oldImageUrl,
         };
 
         const afterSnapshot = {
