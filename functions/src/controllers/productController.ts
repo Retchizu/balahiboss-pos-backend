@@ -147,53 +147,56 @@ export const updateProduct = async (req: Request, res: Response) => {
         const { base64Image, ...rest } = updateProductBody;
 
         // Track image changes
-        const currentImageUrl = currentProduct.imageUrl;
-        let newImageUrl = currentImageUrl;
-        let oldImageUrl = currentImageUrl;
+        const currentImageUrl: string | null = currentProduct.imageUrl ?? null;
+        let newImageUrl: string | null = currentImageUrl;
+        let oldImageUrl: string | null = currentImageUrl;
 
         // 4. Handle image replacement (if base64 provided)
         if (base64Image) {
-            // 4a. Move current image into history if it exists
-            if (currentImageUrl) {
-                try {
-                    const url = new URL(currentProduct.imageUrl);
-                    const oldPath = decodeURIComponent(
-                        url.pathname.split("/o/")[1].split("?")[0]
-                    );
+            // Only replace if actually different
+            if (currentImageUrl || base64Image.startsWith("data:")) {
+                // Upload new base64 image
+                const matches = base64Image.match(/^data:(.+);base64,(.+)$/);
+                if (!matches || matches.length !== 3) {
+                    return res.status(400).json({ error: "Invalid base64 image" });
+                }
 
-                    const oldExt = oldPath.split(".").pop() || "jpg";
-                    const timestamp = format(new Date(), "yyyyMMdd_HHmmss");
-                    const historyPath = `products/history/${productId}/${timestamp}.${oldExt}`;
+                const contentType = matches[1];
+                const buffer = Buffer.from(matches[2], "base64");
+                const fileExtension = contentType.split("/")[1];
+                const fileName = `products/${uuidv4()}.${fileExtension}`;
 
-                    // Copy old file → history path
-                    await storage.file(oldPath).copy(storage.file(historyPath));
-                    oldImageUrl = await getDownloadURL(storage.file(historyPath));
-                    // Delete original old file
-                    await storage.file(oldPath).delete();
-                } catch (error) {
-                    throw new Error(
-                        `Failed to move old image to history: ${(error as Error).message}`
-                    );
+                const file = storage.file(fileName);
+
+                await file.save(buffer, { metadata: { contentType } });
+                const uploadedUrl = await getDownloadURL(file);
+
+                // 🔎 Only do history + update if uploadedUrl is different
+                if (uploadedUrl !== currentImageUrl) {
+                    if (currentImageUrl) {
+                        try {
+                            const url = new URL(currentImageUrl);
+                            const oldPath = decodeURIComponent(
+                                url.pathname.split("/o/")[1].split("?")[0]
+                            );
+
+                            const oldExt = oldPath.split(".").pop() || "jpg";
+                            const timestamp = format(new Date(), "yyyyMMdd_HHmmss");
+                            const historyPath = `products/history/${productId}/${timestamp}.${oldExt}`;
+
+                            await storage.file(oldPath).copy(storage.file(historyPath));
+                            oldImageUrl = await getDownloadURL(storage.file(historyPath));
+                            await storage.file(oldPath).delete();
+                        } catch (err) {
+                            console.warn("History move failed:", (err as Error).message);
+                        }
+                    }
+
+                    newImageUrl = uploadedUrl;
                 }
             }
-
-            // 4b. Validate and upload new base64 image
-            const matches = base64Image.match(/^data:(.+);base64,(.+)$/);
-            if (!matches || matches.length !== 3) {
-                return res.status(400).json({ error: "Invalid base64 image" });
-            }
-
-            const contentType = matches[1]; // e.g. "image/png"
-            const buffer = Buffer.from(matches[2], "base64");
-            const fileExtension = contentType.split("/")[1];
-            const fileName = `products/${uuidv4()}.${fileExtension}`;
-
-            const file = storage.file(fileName);
-
-            // Upload to cloud storage
-            await file.save(buffer, { metadata: { contentType } });
-            newImageUrl = await getDownloadURL(file);
         }
+
 
         // 5. Apply updates to product in DB
         await productRef.update({ ...rest, imageUrl: newImageUrl });
@@ -240,7 +243,8 @@ export const updateProduct = async (req: Request, res: Response) => {
         }
 
         return res.status(500).json({
-            error: "Something went wrong while updating the product. Please try again later.",
+            error: `Something went wrong while updating the product. Please try again later. 
+            ${(error as Error).message}`,
         });
     }
 };
