@@ -11,7 +11,7 @@ import { ZodError } from "zod";
 
 export const addProduct = async (req: Request, res: Response) => {
     try {
-        const { productName, stockPrice, sellPrice, stock, lowStockThreshold, base64Image } =
+        const { productName, stockPrice, sellPrice, stock, base64Image } =
          productSchema.parse(req.body);
         const productRef = realtimeDb.ref("products");
         const product = await productRef.orderByChild("productName").equalTo(productName).get();
@@ -60,7 +60,6 @@ export const addProduct = async (req: Request, res: Response) => {
             stockPrice,
             sellPrice,
             stock,
-            lowStockThreshold,
             imageUrl,
         });
 
@@ -70,7 +69,6 @@ export const addProduct = async (req: Request, res: Response) => {
             stockPrice,
             sellPrice,
             stock,
-            lowStockThreshold,
             imageUrl,
         };
 

@@ -5,6 +5,5 @@ export const productSchema = object({
     stockPrice: number().min(0, { message: "Stock price cannot be negative" }),
     sellPrice: number().min(0, { message: "Sell price cannot be negative" }),
     stock: number().min(0, { message: "Stock cannot be negative" }),
-    lowStockThreshold: number().min(0, { message: "Low stock threshold cannot be negative" }),
     base64Image: string().optional(),
 });
