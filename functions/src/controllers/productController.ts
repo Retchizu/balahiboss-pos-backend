@@ -89,7 +89,7 @@ export const addProduct = async (req: Request, res: Response) => {
         if ((error as FirebaseError).code === "storage/quota-exceeded") {
             return res.status(507).json({ error: "Storage limit reached. Please try again later." });
         }
-
+        console.error("AddProduct Error:", error); // full log for devs
         // Default catch-a
         return res.status(500).json({
             error: "Something went wrong while adding the product. Please try again later.",
@@ -332,7 +332,7 @@ export const addStock = async (req: Request, res: Response) => {
         if (!productId) {
             return res.status(400).json({ error: "Product ID is required" });
         }
-        if (typeof additionalStock !== "number" || additionalStock <= 0) {
+        if (parseFloat(additionalStock) <= 0) {
             return res.status(400).json({ error: "Additional stock must be a positive number" });
         }
 
@@ -344,7 +344,7 @@ export const addStock = async (req: Request, res: Response) => {
         }
 
         const currentProduct = productSnap.val();
-        const newStock = (currentProduct.stock || 0) + additionalStock;
+        const newStock = (parseFloat(currentProduct.stock) || 0) + parseFloat(additionalStock);
 
         await productRef.update({ stock: newStock });
 
