@@ -165,7 +165,6 @@ export const updateTransaction = async (req: Request, res: Response) => {
         }
         const transactionBody = transactionSchema.parse(req.body); // new transaction body
         const newItems: Item[] = transactionBody.items;
-
         const transactionRef = firestoreDb.collection("transactions").doc(transactionId);
         const existingDoc = await transactionRef.get();
 
@@ -176,20 +175,20 @@ export const updateTransaction = async (req: Request, res: Response) => {
         const existingData = existingDoc.data();
         const oldItems: Item[] = existingData?.items || [];
 
-        const oldItemMap = getItemMap(oldItems);
-        const newItemMap = getItemMap(newItems);
+        const oldItemMap = getItemMap(oldItems); // [aozi cat: 1, aozi dog: 1]
+        const newItemMap = getItemMap(newItems); // [aozi cat:2]
 
         // Set of all involved productIds
         const productIds = new Set<string>([
             ...oldItemMap.keys(),
             ...newItemMap.keys(),
-        ]);
+        ]); // [aozi cat, aozi dog]
 
         const updates = [];
 
         for (const productId of productIds) {
-            const oldQty = oldItemMap.get(productId) || 0;
-            const newQty = newItemMap.get(productId) || 0;
+            const oldQty = oldItemMap.get(productId) || 0; // aozi cat:1 aozi dog: 1
+            const newQty = newItemMap.get(productId) || 0; // aozi cat:2 0
             const diff = newQty - oldQty;
 
             if (diff !== 0) {

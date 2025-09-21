@@ -8,7 +8,24 @@ import { ZodError } from "zod";
 export const addCustomer = async (req: Request, res: Response) => {
     try {
         const customerBody = customerSchema.parse(req.body);
-        const customer = await realtimeDb.ref("customers").push(customerBody);
+
+        const customerRef = realtimeDb.ref("customers");
+        const customer = await customerRef.orderByChild("customerName").equalTo(customerBody.customerName).get();
+
+        if (customer.exists()) {
+            let conflict = false;
+            customer.forEach((c) => {
+                if (c.val().deleted !== true) {
+                    conflict = true;
+                    return true; // Exit loop early
+                }
+                return false;
+            });
+            if (conflict) return res.status(409).json({error: `${customerBody.customerName} already exists`});
+        }
+
+
+        const newCustomer = await customerRef.push(customerBody);
 
         const {customerName, customerInfo} = customerBody;
         const afterSnapshot = {
@@ -16,8 +33,8 @@ export const addCustomer = async (req: Request, res: Response) => {
             customerInfo,
         };
 
-        await recordLog("customer", customer.key!, "CREATE", req.user!.uid, null, afterSnapshot);
-        return res.status(201).json({message: "Customer added successfully", customer});
+        await recordLog("customer", newCustomer.key!, "CREATE", req.user!.uid, null, afterSnapshot);
+        return res.status(201).json({message: "Customer added successfully", newCustomer});
     } catch (error) {
         console.error("addCustomer error:", error);
 
@@ -123,7 +140,7 @@ export const deleteCustomer = async (req: Request, res: Response) => {
 
         const beforeSnapshot = customer.val();
 
-        await customerRef.remove();
+        await customerRef.update({deleted: true});
 
         await recordLog(
             "customer",

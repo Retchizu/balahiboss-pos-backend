@@ -14,6 +14,19 @@ export const addProduct = async (req: Request, res: Response) => {
         const { productName, stockPrice, sellPrice, stock, lowStockThreshold, base64Image } =
          productSchema.parse(req.body);
         const productRef = realtimeDb.ref("products");
+        const product = await productRef.orderByChild("productName").equalTo(productName).get();
+
+        if (product.exists()) {
+            let conflict = false;
+            product.forEach((p) => {
+                if (p.val().deleted !== true) {
+                    conflict = true;
+                    return true; // exit loop early
+                }
+                return false;
+            });
+            if (conflict) return res.status(409).json({ error: `${productName} already exists` });
+        }
 
         let imageUrl = "";
         if (base64Image) {
@@ -285,7 +298,7 @@ export const deleteProduct = async (req: Request, res: Response) => {
         }
 
         //  Delete product from database
-        await productRef.remove();
+        await productRef.update({deleted: true});
 
         const beforeSnapshot = {
             ...product,
