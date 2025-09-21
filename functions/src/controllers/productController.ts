@@ -323,3 +323,55 @@ export const deleteProduct = async (req: Request, res: Response) => {
         });
     }
 };
+
+export const addStock = async (req: Request, res: Response) => {
+    try {
+        const { productId } = req.params;
+        const { additionalStock } = req.body;
+
+        if (!productId) {
+            return res.status(400).json({ error: "Product ID is required" });
+        }
+        if (typeof additionalStock !== "number" || additionalStock <= 0) {
+            return res.status(400).json({ error: "Additional stock must be a positive number" });
+        }
+
+        const productRef = realtimeDb.ref(`products/${productId}`);
+        const productSnap = await productRef.get();
+
+        if (!productSnap.exists()) {
+            return res.status(404).json({ error: "Product not found" });
+        }
+
+        const currentProduct = productSnap.val();
+        const newStock = (currentProduct.stock || 0) + additionalStock;
+
+        await productRef.update({ stock: newStock });
+
+        const beforeSnapshot = { ...currentProduct };
+        const afterSnapshot = { ...currentProduct, stock: newStock };
+
+        await recordLog("product", productId, "UPDATE", req.user!.uid, beforeSnapshot, afterSnapshot);
+
+        return res.status(200).json({ message: `Stock updated successfully. New stock: ${newStock}` });
+    } catch (error) {
+        console.error("AddStock Error:", error);
+
+        if (error instanceof ZodError) {
+            return res.status(400).json({ error: "Invalid data. Please check your inputs." });
+        }
+        if ((error as FirebaseError).code === "permission-denied") {
+            return res.status(403).json({ error: "You don’t have permission to update product stock." });
+        }
+        if ((error as FirebaseError).code === "unavailable") {
+            return res.status(503).json({ error: "Service temporarily unavailable. Please try again later." });
+        }
+        if ((error as FirebaseError).code === "resource-exhausted") {
+            return res.status(507).json({ error: "Database quota exceeded. Please contact support." });
+        }
+
+        return res.status(500).json({
+            error: "Failed to update stock. Please try again later.",
+        });
+    }
+};
