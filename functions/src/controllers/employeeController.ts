@@ -89,8 +89,8 @@ export const getEmployeeTimesheets = async (req: Request, res: Response) => {
         const timesheetsRef = firestoreDb.collection("timesheets");
         const snapshot = await timesheetsRef
             .where("uid", "==", uid)
-            .where("loginTime", ">=", startIso)
-            .where("loginTime", "<=", endIso)
+            .where("date", ">=", startIso)
+            .where("date", "<=", endIso)
             .get();
 
         const timesheets = snapshot.docs.map((doc) => ({
@@ -135,7 +135,7 @@ export const getEmployeeTimesheet = async (req: Request, res: Response) => {
 
 export const updateEmployeeTimeSheet = async (req: Request, res: Response) => {
     try {
-        const { id, loginTime, logoutTime, reason } = timesheetSchema.parse(req.body);
+        const { id, date, loginTime, logoutTime } = timesheetSchema.parse(req.body);
 
         const timesheetRef = firestoreDb.collection("timesheets").doc(id);
         const docSnap = await timesheetRef.get();
@@ -149,8 +149,8 @@ export const updateEmployeeTimeSheet = async (req: Request, res: Response) => {
             return res.status(400).json({ error: "Invalid timesheet data." });
         }
 
-        const updatedLogin = loginTime ? new Date(loginTime) : data.loginTime.toDate();
-        const updatedLogout = logoutTime ? new Date(logoutTime) : data.logoutTime?.toDate();
+        const updatedLogin: Date = loginTime ? new Date(loginTime) : data.loginTime.toDate();
+        const updatedLogout: Date = logoutTime ? new Date(logoutTime) : data.logoutTime?.toDate();
 
         if (updatedLogout && updatedLogout < updatedLogin) {
             return res.status(400).json({
@@ -160,11 +160,11 @@ export const updateEmployeeTimeSheet = async (req: Request, res: Response) => {
         const durationMs = updatedLogout.getTime() - updatedLogin.getTime();
 
         await timesheetRef.update({
-            loginTime: updatedLogin,
-            logoutTime: updatedLogout || null,
+            loginTime: updatedLogin.toISOString(),
+            logoutTime: updatedLogout ? updatedLogout.toISOString() : null,
             duration: durationMs,
             updatedAt: new Date(),
-            reason: reason,
+            date: date,
         });
 
         return res.status(200).json({ message: "Timesheet updated successfully." });
