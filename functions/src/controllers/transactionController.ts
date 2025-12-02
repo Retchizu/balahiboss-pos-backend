@@ -20,20 +20,50 @@ export const addTransaction = async (req: Request, res: Response) => {
         const log = await prepareLog("transaction", newTransactionId, "CREATE", req.user!.uid, null, transactionBody);
 
         await firestoreDb.runTransaction(async (transaction) => {
+            // Phase 1: Read all products first (all reads must come before writes)
+            const productRefs: FirebaseFirestore.DocumentReference[] = [];
+            const productSnaps: FirebaseFirestore.DocumentSnapshot[] = [];
+
             for (const item of transactionBody.items) {
                 const productRef = productsRef.doc(item.productId);
+                productRefs.push(productRef);
                 const productSnap = await transaction.get(productRef);
-                if (!productSnap.exists) throw new Error(`Product ${item.productId} not found`);
+                productSnaps.push(productSnap);
+            }
+
+            // Phase 2: Validate and calculate stock changes
+            const stockUpdates: Array<{ ref: FirebaseFirestore.DocumentReference; newStock: number }> = [];
+            for (let i = 0; i < transactionBody.items.length; i++) {
+                const item = transactionBody.items[i];
+                const productSnap = productSnaps[i];
+
+                if (!productSnap.exists) {
+                    throw new Error(`Product ${item.productId} not found`);
+                }
 
                 const productData = productSnap.data();
                 const newStock = productData!.stock - item.quantity;
+
                 if (newStock < 0) {
                     throw new Error(`INSUFFICIENT_STOCK:${item.productId}`);
                 }
-                transaction.update(productRef, {stock: newStock});
+
+                stockUpdates.push({
+                    ref: productRefs[i],
+                    newStock,
+                });
             }
+
+            // Phase 3: Perform all writes (all reads are now complete)
+            // Update product stocks
+            for (const update of stockUpdates) {
+                transaction.update(update.ref, { stock: update.newStock });
+            }
+
+            // Create transaction document
             transaction.set(newTransactionRef, transactionBody);
-            // if sending to an employee in pending orders
+
+            // Create pending order if needed
             if (transactionBody.pending) {
                 const pendingRef = pendingOrdersCol.doc(newTransactionId);
                 transaction.set(pendingRef, {
@@ -44,6 +74,7 @@ export const addTransaction = async (req: Request, res: Response) => {
                 });
             }
 
+            // Record activity log
             recordLog(transaction, log);
         });
 
@@ -172,12 +203,12 @@ export const updateTransaction = async (req: Request, res: Response) => {
         const transactionRef = transactionsRef.doc(transactionId);
 
         await firestoreDb.runTransaction(async (transaction) => {
+            // Phase 1: Read all documents first (all reads must come before writes)
             const existingTransaction = await transaction.get(transactionRef);
             if (!existingTransaction.exists) throw new Error("TRANSACTION_NOT_FOUND");
             const existingData = existingTransaction.data()!;
 
             const oldItems: Item[] = existingData.items || [];
-
             const oldItemMap = getItemMap(oldItems);
             const newItemMap = getItemMap(newItems);
 
@@ -186,13 +217,36 @@ export const updateTransaction = async (req: Request, res: Response) => {
                 ...newItemMap.keys(),
             ]);
 
-            for (const productId of productIds) {
+            // Read all products
+            const productRefs: FirebaseFirestore.DocumentReference[] = [];
+            const productSnaps: FirebaseFirestore.DocumentSnapshot[] = [];
+            const productIdsArray = Array.from(productIds);
+
+            for (const productId of productIdsArray) {
+                const productRef = productsRef.doc(productId);
+                productRefs.push(productRef);
+                const productSnap = await transaction.get(productRef);
+                productSnaps.push(productSnap);
+            }
+
+            // Read pending order if needed
+            let pendingSnap: FirebaseFirestore.DocumentSnapshot | null = null;
+            if (transactionBody.pending) {
+                const pendingRef = pendingOrdersRef.doc(transactionId);
+                pendingSnap = await transaction.get(pendingRef);
+            }
+
+            // Phase 2: Calculate all changes
+            const stockUpdates: Array<{ ref: FirebaseFirestore.DocumentReference; newStock: number }> = [];
+            for (let i = 0; i < productIdsArray.length; i++) {
+                const productId = productIdsArray[i];
+                const productSnap = productSnaps[i];
+
                 const oldQty = oldItemMap.get(productId) || 0;
                 const newQty = newItemMap.get(productId) || 0;
                 const diff = newQty - oldQty;
+
                 if (diff !== 0) {
-                    const productRef = productsRef.doc(productId);
-                    const productSnap = await transaction.get(productRef);
                     if (!productSnap.exists) throw new Error(`PRODUCT_NOT_FOUND:${productId}`);
 
                     const productData = productSnap.data()!;
@@ -200,28 +254,39 @@ export const updateTransaction = async (req: Request, res: Response) => {
 
                     if (newStock < 0) throw new Error(`INSUFFICIENT_STOCK:${productId}`);
 
-                    transaction.update(productRef, { stock: newStock });
+                    stockUpdates.push({
+                        ref: productRefs[i],
+                        newStock,
+                    });
                 }
             }
 
+            // Phase 3: Perform all writes (all reads are now complete)
+            // Update product stocks
+            for (const update of stockUpdates) {
+                transaction.update(update.ref, { stock: update.newStock });
+            }
+
+            // Update transaction document
             transaction.update(transactionRef, transactionBody);
 
+            // Update/create pending order if needed
             if (transactionBody.pending) {
                 const pendingRef = pendingOrdersRef.doc(transactionId);
-                const pendingSnap = await transaction.get(pendingRef);
-
                 const newPendingData = {
                     transaction: transactionBody,
                     orderInformation: transactionBody.orderInformation || "",
-                    status: pendingSnap.exists ? pendingSnap.data()?.status : "pending",
+                    status: pendingSnap?.exists ? pendingSnap.data()?.status : "pending",
                     date: new Date().toISOString(),
-                    checkedBy: pendingSnap.exists ?
+                    checkedBy: pendingSnap?.exists ?
                         Array.from(new Set([...(pendingSnap.data()?.checkedBy || []), req.user!.uid])):
                         [req.user!.uid],
                 };
 
                 transaction.set(pendingRef, newPendingData, { merge: true });
             }
+
+            // Record activity log
             const log = await prepareLog(
                 "transaction",
                 transactionId,
@@ -302,3 +367,4 @@ export const deleteTransaction = async (req: Request, res: Response) => {
         return res.status(500).json({message: "Failed to delete transaction", error: (error as Error).message});
     }
 };
+
