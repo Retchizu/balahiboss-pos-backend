@@ -5,6 +5,26 @@ import { Request, Response } from "express";
 import { getAuth, UserRecord } from "firebase-admin/auth";
 import { ZodError } from "zod";
 import { toPHTRange } from "./transactionController";
+import { endOfDay, isSameDay } from "date-fns";
+import { toZonedTime, fromZonedTime } from "date-fns-tz";
+
+const timeZone = "Asia/Manila";
+
+const capLogoutAtEndOfLoginDay = (loginTime: Date, logoutTime: Date): string => {
+    const loginInPht = toZonedTime(loginTime, timeZone);
+    const logoutInPht = toZonedTime(logoutTime, timeZone);
+
+    // Check if login and logout are on the same day
+    if (!isSameDay(loginInPht, logoutInPht)) {
+        // Cap logout at 11:59:59.999 PM of the login day
+        const endOfLoginDay = endOfDay(loginInPht);
+        const endOfLoginDayUtc = fromZonedTime(endOfLoginDay, timeZone);
+        return endOfLoginDayUtc.toISOString();
+    }
+
+    // Same day, return logout time as is
+    return logoutTime.toISOString();
+};
 
 export const getEmployees = async (req: Request, res: Response) => {
     try {
@@ -150,14 +170,21 @@ export const updateEmployeeTimeSheet = async (req: Request, res: Response) => {
         }
 
         const updatedLogin: Date = loginTime ? new Date(loginTime) : data.loginTime.toDate();
-        const updatedLogout: Date = logoutTime ? new Date(logoutTime) : data.logoutTime?.toDate();
+        let updatedLogout: Date | null = logoutTime ? new Date(logoutTime) : data.logoutTime?.toDate() || null;
 
         if (updatedLogout && updatedLogout < updatedLogin) {
             return res.status(400).json({
                 error: "Logout time cannot be earlier than login time.",
             });
         }
-        const durationMs = updatedLogout.getTime() - updatedLogin.getTime();
+
+        // Cap logout at 11:59 PM of login day if on different days
+        if (updatedLogout) {
+            const cappedLogoutIso = capLogoutAtEndOfLoginDay(updatedLogin, updatedLogout);
+            updatedLogout = new Date(cappedLogoutIso);
+        }
+
+        const durationMs = updatedLogout ? updatedLogout.getTime() - updatedLogin.getTime() : 0;
 
         await timesheetRef.update({
             loginTime: updatedLogin.toISOString(),

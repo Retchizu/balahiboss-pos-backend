@@ -1,6 +1,32 @@
 import { firestoreDb } from "@/config/firebaseConfig";
 import allowedEmails from "@/types/allowedEmails";
 import { Request, Response} from "express";
+import { endOfDay, isSameDay } from "date-fns";
+import { toZonedTime, fromZonedTime } from "date-fns-tz";
+
+const timeZone = "Asia/Manila";
+
+/**
+ * Caps logout time at 11:59 PM of the login day if logout is on a different day
+ * @param {Date} loginTime - The login time
+ * @param {Date} logoutTime - The logout time
+ * @return {string} The capped logout time in ISO string format
+ */
+const capLogoutAtEndOfLoginDay = (loginTime: Date, logoutTime: Date): string => {
+    const loginInPht = toZonedTime(loginTime, timeZone);
+    const logoutInPht = toZonedTime(logoutTime, timeZone);
+
+    // Check if login and logout are on the same day
+    if (!isSameDay(loginInPht, logoutInPht)) {
+        // Cap logout at 11:59:59.999 PM of the login day
+        const endOfLoginDay = endOfDay(loginInPht);
+        const endOfLoginDayUtc = fromZonedTime(endOfLoginDay, timeZone);
+        return endOfLoginDayUtc.toISOString();
+    }
+
+    // Same day, return logout time as is
+    return logoutTime.toISOString();
+};
 
 export const signInUser = async (req: Request, res: Response) => {
     try {
@@ -63,8 +89,11 @@ export const signOutUser = async (req: Request, res: Response) => {
 
                 const loginTime = new Date(data.loginTime);
                 const logout = new Date();
-                const durationMs = logout.getTime() - loginTime.getTime();
-                const logoutIso = logout.toISOString();
+
+                // Cap logout at 11:59 PM of login day if on different days
+                const logoutIso = capLogoutAtEndOfLoginDay(loginTime, logout);
+                const cappedLogoutTime = new Date(logoutIso);
+                const durationMs = cappedLogoutTime.getTime() - loginTime.getTime();
 
                 if (durationMs < 0) {
                     return res.status(400).json({ error: "Invalid logout time. Logout cannot be before login." });

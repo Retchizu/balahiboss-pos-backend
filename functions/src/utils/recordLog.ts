@@ -3,7 +3,7 @@ import ActivityAction from "@/types/ActivityAction";
 import ActivityEntity from "@/types/ActivityEntity";
 import getChanges from "@/utils/getChanges";
 
-const recordLog = async<T>(
+export const prepareLog = async<T>(
     entity: ActivityEntity,
     entityId: string,
     action: ActivityAction,
@@ -14,10 +14,9 @@ const recordLog = async<T>(
     try {
         const actor = await auth.getUser(userId);
         const displayName = actor.displayName || "";
-
         const changes = getChanges(before, after);
 
-        const log = {
+        return {
             entity,
             entityId,
             action,
@@ -26,7 +25,18 @@ const recordLog = async<T>(
             changes,
             date: new Date().toISOString(),
         };
-        await firestoreDb.collection("activities").add(log);
+    } catch (error) {
+        throw new Error((error as Error).message);
+    }
+};
+
+const recordLog = (
+    transaction: FirebaseFirestore.Transaction,
+    log: unknown
+) => {
+    try {
+        const activityLogRef = firestoreDb.collection("activities").doc();
+        transaction.set(activityLogRef, log);
     } catch (error) {
         throw new Error((error as Error).message);
     }

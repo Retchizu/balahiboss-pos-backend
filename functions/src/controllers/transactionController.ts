@@ -1,5 +1,5 @@
-import { firestoreDb, realtimeDb } from "@/config/firebaseConfig";
-import recordLog from "@/utils/recordLog";
+import { firestoreDb } from "@/config/firebaseConfig";
+import recordLog, { prepareLog } from "@/utils/recordLog";
 import { transactionSchema } from "@/zod-schemas/transactionSchema";
 import { endOfDay, startOfDay } from "date-fns";
 import { toZonedTime, fromZonedTime } from "date-fns-tz";
@@ -10,45 +10,43 @@ import { ZodError } from "zod";
 export const addTransaction = async (req: Request, res: Response) => {
     try {
         const transactionBody = transactionSchema.parse(req.body);
-        const transactionRef = firestoreDb.collection("transactions");
-        const transaction = await transactionRef.add(transactionBody);
+        const transactionsRef = firestoreDb.collection("transactions");
+        const productsRef = firestoreDb.collection("products");
+        const pendingOrdersCol = firestoreDb.collection("pendingOrders");
 
-        // product logic after transaction
-        const updatePromises = transactionBody.items.map(async (item) => {
-            const productId = item.productId;
-            const productRef = realtimeDb.ref(`products/${productId}`);
-            const productSnapshot = await productRef.get();
-            const product = productSnapshot.val();
+        const newTransactionRef = transactionsRef.doc();
+        const newTransactionId = newTransactionRef.id;
 
-            if (!product) throw new Error(`Product ${productId} not found`);
+        const log = await prepareLog("transaction", newTransactionId, "CREATE", req.user!.uid, null, transactionBody);
 
-            const newQuantity = product.stock - item.quantity;
-            if (newQuantity < 0) throw new Error(`Insufficient stock for product ${productId}`);
+        await firestoreDb.runTransaction(async (transaction) => {
+            for (const item of transactionBody.items) {
+                const productRef = productsRef.doc(item.productId);
+                const productSnap = await transaction.get(productRef);
+                if (!productSnap.exists) throw new Error(`Product ${item.productId} not found`);
 
-            await productRef.update({ stock: newQuantity });
+                const productData = productSnap.data();
+                const newStock = productData!.stock - item.quantity;
+                if (newStock < 0) {
+                    throw new Error(`INSUFFICIENT_STOCK:${item.productId}`);
+                }
+                transaction.update(productRef, {stock: newStock});
+            }
+            transaction.set(newTransactionRef, transactionBody);
+            // if sending to an employee in pending orders
+            if (transactionBody.pending) {
+                const pendingRef = pendingOrdersCol.doc(newTransactionId);
+                transaction.set(pendingRef, {
+                    transaction: transactionBody,
+                    orderInformation: transactionBody.orderInformation || "",
+                    status: "pending",
+                    date: new Date().toISOString(),
+                });
+            }
+
+            recordLog(transaction, log);
         });
 
-        await Promise.all(updatePromises);
-
-        // if sending to an employee in pending orders
-        if (transactionBody.pending) {
-            const pendingOrderRef = realtimeDb.ref(`pendingOrders/${transaction.id}`);
-            await pendingOrderRef.set({
-                transaction: transactionBody,
-                orderInformation: transactionBody.orderInformation || "",
-                status: "pending",
-                date: new Date().toISOString(),
-            });
-        }
-
-        await recordLog(
-            "transaction",
-            transaction.id,
-            "CREATE",
-            req.user!.uid,
-            null,
-            transactionBody
-        );
         return res.status(200).json({message: "Transaction added successfully"});
     } catch (error) {
         console.error("addTransaction error:", error);
@@ -165,79 +163,93 @@ export const updateTransaction = async (req: Request, res: Response) => {
         }
         const transactionBody = transactionSchema.parse(req.body); // new transaction body
         const newItems: Item[] = transactionBody.items;
-        const transactionRef = firestoreDb.collection("transactions").doc(transactionId);
-        const existingDoc = await transactionRef.get();
 
-        if (!existingDoc.exists) {
-            return res.status(404).json({ message: "Transaction not found" });
-        }
 
-        const existingData = existingDoc.data();
-        const oldItems: Item[] = existingData?.items || [];
+        const transactionsRef = firestoreDb.collection("transactions");
+        const productsRef = firestoreDb.collection("products");
+        const pendingOrdersRef = firestoreDb.collection("pendingOrders");
 
-        const oldItemMap = getItemMap(oldItems); // [aozi cat: 1, aozi dog: 1]
-        const newItemMap = getItemMap(newItems); // [aozi cat:2]
+        const transactionRef = transactionsRef.doc(transactionId);
 
-        // Set of all involved productIds
-        const productIds = new Set<string>([
-            ...oldItemMap.keys(),
-            ...newItemMap.keys(),
-        ]); // [aozi cat, aozi dog]
+        await firestoreDb.runTransaction(async (transaction) => {
+            const existingTransaction = await transaction.get(transactionRef);
+            if (!existingTransaction.exists) throw new Error("TRANSACTION_NOT_FOUND");
+            const existingData = existingTransaction.data()!;
 
-        const updates = [];
+            const oldItems: Item[] = existingData.items || [];
 
-        for (const productId of productIds) {
-            const oldQty = oldItemMap.get(productId) || 0; // aozi cat:1 aozi dog: 1
-            const newQty = newItemMap.get(productId) || 0; // aozi cat:2 0
-            const diff = newQty - oldQty;
+            const oldItemMap = getItemMap(oldItems);
+            const newItemMap = getItemMap(newItems);
 
-            if (diff !== 0) {
-                const productStockRef = realtimeDb.ref(`products/${productId}/stock`);
+            const productIds = new Set<string>([
+                ...oldItemMap.keys(),
+                ...newItemMap.keys(),
+            ]);
 
-                updates.push(
-                    productStockRef.transaction((currentStock: number) => {
-                        if (typeof currentStock !== "number") currentStock = 0;
-                        return currentStock - diff;
-                    })
-                );
+            for (const productId of productIds) {
+                const oldQty = oldItemMap.get(productId) || 0;
+                const newQty = newItemMap.get(productId) || 0;
+                const diff = newQty - oldQty;
+                if (diff !== 0) {
+                    const productRef = productsRef.doc(productId);
+                    const productSnap = await transaction.get(productRef);
+                    if (!productSnap.exists) throw new Error(`PRODUCT_NOT_FOUND:${productId}`);
+
+                    const productData = productSnap.data()!;
+                    const newStock = (productData.stock || 0) - diff;
+
+                    if (newStock < 0) throw new Error(`INSUFFICIENT_STOCK:${productId}`);
+
+                    transaction.update(productRef, { stock: newStock });
+                }
             }
-        }
 
-        await Promise.all(updates);
-        const beforeSnapshot = existingData;
+            transaction.update(transactionRef, transactionBody);
 
-        await transactionRef.update(transactionBody);
+            if (transactionBody.pending) {
+                const pendingRef = pendingOrdersRef.doc(transactionId);
+                const pendingSnap = await transaction.get(pendingRef);
 
-        await recordLog(
-            "transaction",
-            transactionId,
-            "UPDATE",
-            req.user!.uid,
-            beforeSnapshot,
-            transactionBody // after snapshot
-        );
+                const newPendingData = {
+                    transaction: transactionBody,
+                    orderInformation: transactionBody.orderInformation || "",
+                    status: pendingSnap.exists ? pendingSnap.data()?.status : "pending",
+                    date: new Date().toISOString(),
+                    checkedBy: pendingSnap.exists ?
+                        Array.from(new Set([...(pendingSnap.data()?.checkedBy || []), req.user!.uid])):
+                        [req.user!.uid],
+                };
 
-        // if sending to an employee in pending orders
-        if (transactionBody.pending) {
-            const pendingOrderRef = realtimeDb.ref(`pendingOrders/${transactionId}`);
-            const pendingOrder = await pendingOrderRef.get();
-
-            const newPendingOrderData = {
-                transaction: transactionBody,
-                orderInformation: transactionBody.orderInformation,
-                status: pendingOrder.exists() ? pendingOrder.val().status : "pending",
-                date: new Date().toISOString(),
-                checkedBy: pendingOrder.exists() ?
-                    Array.from(new Set([...pendingOrder.val().checkedBy, req.user?.uid])) : [],
-            };
-
-            await pendingOrderRef.set(newPendingOrderData);
-        }
+                transaction.set(pendingRef, newPendingData, { merge: true });
+            }
+            const log = await prepareLog(
+                "transaction",
+                transactionId,
+                "UPDATE",
+                req.user!.uid,
+                existingData,
+                transactionBody
+            );
+            recordLog(transaction, log);
+        });
 
         return res
             .status(200)
             .json({ message: "Transaction updated successfully" });
     } catch (error) {
+        if ((error as Error).message === "TRANSACTION_NOT_FOUND") {
+            return res.status(404).json({ error: "Transaction not found" });
+        }
+
+        if ((error as Error).message.startsWith("PRODUCT_NOT_FOUND:")) {
+            const id = (error as Error).message.split(":")[1];
+            return res.status(404).json({ error: `Product ${id} not found` });
+        }
+
+        if ((error as Error).message.startsWith("INSUFFICIENT_STOCK:")) {
+            const id = (error as Error).message.split(":")[1];
+            return res.status(400).json({ error: `Insufficient stock for product ${id}` });
+        }
         return res.status(500).json({message: "Failed to update transaction", error: (error as Error).message});
     }
 };
@@ -249,46 +261,42 @@ export const deleteTransaction = async (req: Request, res: Response) => {
         if (!transactionId) {
             return res.status(400).json({ message: "transactionId is required" });
         }
-        const transactionRef = firestoreDb.collection("transactions").doc(transactionId);
 
-        const existingDoc = await transactionRef.get();
-        if (!existingDoc.exists) {
-            return res.status(404).json({message: "Transaction does not exists"});
-        }
-        const existingData = existingDoc.data();
-        const items: Item[] = existingData?.items || [];
-        const itemMap = getItemMap(items);
-        const productIds = itemMap.keys();
+        const transactionsRef = firestoreDb.collection("transactions");
+        const productsRef = firestoreDb.collection("products");
+        const pendingOrdersRef = firestoreDb.collection("pendingOrders");
+        const transactionRef = transactionsRef.doc(transactionId);
 
-        const updates = [];
-        for (const productId of productIds) {
-            const productQty = itemMap.get(productId) || 0;
-            const productStockRef = realtimeDb.ref(`products/${productId}/stock`);
-            updates.push(
-                productStockRef.transaction((currentStock: number) => {
-                    return currentStock + productQty;
-                })
-            );
-        }
+        await firestoreDb.runTransaction(async (transaction) => {
+            const existingDoc = await transaction.get(transactionRef);
+            if (!existingDoc.exists) throw new Error("TRANSACTION_NOT_FOUND");
+            const existingData = existingDoc.data()!;
+            const items: Item[] = existingData.items || [];
+            const itemMap = getItemMap(items);
 
-        const pendingOrderRef = realtimeDb.ref(`pendingOrders/${transactionId}`);
-        const pendingOrder = await pendingOrderRef.get();
+            const pendingRef = pendingOrdersRef.doc(transactionId);
+            const pendingSnap = await transaction.get(pendingRef);
 
-        if (pendingOrder.exists()) {
-            await pendingOrderRef.remove();
-        }
+            for (const [productId, qty] of itemMap.entries()) {
+                const productRef = productsRef.doc(productId);
+                const productSnap = await transaction.get(productRef);
 
-        await Promise.all(updates);
+                if (!productSnap.exists) throw new Error(`PRODUCT_NOT_FOUND:${productId}`);
 
-        await recordLog(
-            "transaction",
-            transactionId,
-            "DELETE",
-            req.user!.uid,
-            existingData,
-            null
-        );
-        await transactionRef.delete();
+                const productData = productSnap.data()!;
+                const newStock = (productData.stock || 0) + qty;
+
+                transaction.update(productRef, { stock: newStock });
+            }
+
+            if (pendingSnap.exists) {
+                transaction.delete(pendingRef);
+            }
+            transaction.delete(transactionRef);
+            const log = await prepareLog("transaction", transactionId, "DELETE", req.user!.uid, existingData, null);
+            recordLog(transaction, log);
+        });
+
         return res.status(200).json({message: "Transaction deleted successfully"});
     } catch (error) {
         return res.status(500).json({message: "Failed to delete transaction", error: (error as Error).message});

@@ -1,5 +1,5 @@
-import { realtimeDb, storage } from "@/config/firebaseConfig";
-import recordLog from "@/utils/recordLog";
+import { firestoreDb, storage } from "@/config/firebaseConfig";
+import recordLog, { prepareLog } from "@/utils/recordLog";
 import { productSchema } from "@/zod-schemas/productSchema";
 import { Request, Response } from "express";
 import { getDownloadURL } from "firebase-admin/storage";
@@ -7,26 +7,13 @@ import { v4 as uuidv4 } from "uuid";
 import {format} from "date-fns";
 import { FirebaseError } from "firebase-admin";
 import { ZodError } from "zod";
+import Product from "@/types/Product";
 
 
 export const addProduct = async (req: Request, res: Response) => {
     try {
         const { productName, stockPrice, sellPrice, stock, base64Image } =
          productSchema.parse(req.body);
-        const productRef = realtimeDb.ref("products");
-        const product = await productRef.orderByChild("productName").equalTo(productName).get();
-
-        if (product.exists()) {
-            let conflict = false;
-            product.forEach((p) => {
-                if (p.val().deleted !== true) {
-                    conflict = true;
-                    return true; // exit loop early
-                }
-                return false;
-            });
-            if (conflict) return res.status(409).json({ error: `${productName} already exists` });
-        }
 
         let imageUrl = "";
         if (base64Image) {
@@ -55,25 +42,32 @@ export const addProduct = async (req: Request, res: Response) => {
             imageUrl = await getDownloadURL(file);
         }
 
-        const productRefPush = await productRef.push({
-            productName,
-            stockPrice,
-            sellPrice,
-            stock,
-            imageUrl,
+        const productRef = firestoreDb.collection("products");
+        const existingProductRef = productRef.where("productName", "==", productName);
+
+        // activity log
+        const afterSnapshot = { productName, stockPrice, sellPrice, stock, imageUrl };
+        const newProductRef = productRef.doc();
+        const log = await prepareLog("product", newProductRef.id, "CREATE", req.user!.uid, null, afterSnapshot);
+
+
+        await firestoreDb.runTransaction(async (transaction) => {
+            const product = await transaction.get(existingProductRef);
+
+            if (!product.empty) {
+                const conflict = product.docs.some((doc) => doc.data().deleted !== true);
+                if (conflict) throw new Error("PRODUCT_CONFLICT");
+            }
+
+            transaction.set(newProductRef, {
+                productName,
+                stockPrice,
+                sellPrice,
+                stock,
+                imageUrl,
+            });
+            recordLog(transaction, log);
         });
-
-        const newProductId = productRefPush.key!;
-        const afterSnapshot = {
-            productName,
-            stockPrice,
-            sellPrice,
-            stock,
-            imageUrl,
-        };
-
-        await recordLog("product", newProductId, "CREATE", req.user!.uid, null, afterSnapshot);
-
         return res.status(201).json({message: `${productName} added successfully`});
     } catch (error) {
         console.error("AddProduct Error:", error); // full log for devs
@@ -89,8 +83,11 @@ export const addProduct = async (req: Request, res: Response) => {
         if ((error as FirebaseError).code === "storage/quota-exceeded") {
             return res.status(507).json({ error: "Storage limit reached. Please try again later." });
         }
+        if ((error as Error).message === "PRODUCT_CONFLICT") {
+            return res.status(409).json({ error: `${req.body.productName} already exists` });
+        }
         console.error("AddProduct Error:", error); // full log for devs
-        // Default catch-a
+
         return res.status(500).json({
             error: "Something went wrong while adding the product. Please try again later.",
         });
@@ -99,10 +96,13 @@ export const addProduct = async (req: Request, res: Response) => {
 
 export const getProducts = async (req: Request, res: Response) => {
     try {
-        const productsRef = realtimeDb.ref("products");
+        const productsRef = firestoreDb.collection("products");
         const products = await productsRef.get();
-        console.log("get products");
-        return res.status(200).json({items: products.val()});
+        const productRecord: Record<string, Product> = {};
+        products.docs.forEach((product) => {
+            productRecord[product.id] = product.data() as Product;
+        });
+        return res.status(200).json({items: productRecord});
     } catch (error) {
         return res.status(500).json({
             message: `Failed to get products: ${(error as Error).message}`,
@@ -141,15 +141,15 @@ export const updateProduct = async (req: Request, res: Response) => {
         }
 
         // 2. Get product reference from Realtime DB
-        const productRef = realtimeDb.ref(`products/${productId}`);
+        const productRef = firestoreDb.collection("products").doc(productId);
         const product = await productRef.get();
 
-        if (!product.exists()) {
+        if (!product.exists) {
             return res.status(404).json({ error: "Product not found" });
         }
 
         // Snapshot of current product before update
-        const currentProduct = product.val();
+        const currentProduct = product.data();
 
         // 3. Validate request body against schema
         const updateProductBody = productSchema.parse(req.body);
@@ -158,7 +158,7 @@ export const updateProduct = async (req: Request, res: Response) => {
         const { base64Image, ...rest } = updateProductBody;
 
         // Track image changes
-        const currentImageUrl: string | null = currentProduct.imageUrl ?? null;
+        const currentImageUrl: string | null = currentProduct!.imageUrl ?? null;
         let newImageUrl: string | null = currentImageUrl;
         let oldImageUrl: string | null = currentImageUrl;
 
@@ -182,7 +182,7 @@ export const updateProduct = async (req: Request, res: Response) => {
                 await file.save(buffer, { metadata: { contentType } });
                 const uploadedUrl = await getDownloadURL(file);
 
-                // 🔎 Only do history + update if uploadedUrl is different
+                // Only do history + update if uploadedUrl is different
                 if (uploadedUrl !== currentImageUrl) {
                     if (currentImageUrl) {
                         try {
@@ -208,11 +208,6 @@ export const updateProduct = async (req: Request, res: Response) => {
             }
         }
 
-
-        // 5. Apply updates to product in DB
-        await productRef.update({ ...rest, imageUrl: newImageUrl });
-
-        // 6. Prepare before/after snapshots for logging
         const beforeSnapshot = {
             ...currentProduct,
             imageUrl: oldImageUrl,
@@ -224,17 +219,23 @@ export const updateProduct = async (req: Request, res: Response) => {
             imageUrl: newImageUrl,
         };
 
-        // Log structured update
-        recordLog(
-            "product",
-            productId,
-            "UPDATE",
-            req.user!.uid,
-            beforeSnapshot,
-            afterSnapshot
-        );
+        const log = await prepareLog("product", productId, "UPDATE", req.user!.uid, beforeSnapshot, afterSnapshot);
 
-        // 7. Return success response
+        await firestoreDb.runTransaction(async (transaction) => {
+            const doc = await transaction.get(productRef);
+
+            if (!doc.exists) {
+                throw new Error("PRODUCT_NOT_FOUND");
+            }
+
+            transaction.update(productRef, {
+                ...rest,
+                imageUrl: newImageUrl,
+            });
+
+            recordLog(transaction, log);
+        });
+
         return res.status(200).json({
             message: `${updateProductBody.productName} updated successfully`,
         });
@@ -253,6 +254,9 @@ export const updateProduct = async (req: Request, res: Response) => {
             return res.status(507).json({ error: "Storage limit reached. Please try again later." });
         }
 
+        if ((error as Error).message === "PRODUCT_CONFLICT") {
+            return res.status(409).json({ error: `${req.body.productName} already exists` });
+        }
         return res.status(500).json({
             error: `Something went wrong while updating the product. Please try again later. 
             ${(error as Error).message}`,
@@ -270,21 +274,21 @@ export const deleteProduct = async (req: Request, res: Response) => {
             });
         }
 
-        const productRef = realtimeDb.ref(`products/${productId}`);
+        const productRef = firestoreDb.collection("products").doc(productId);
         const snapshot = await productRef.get();
 
-        if (!snapshot.exists()) {
+        if (!snapshot.exists) {
             return res.status(404).json({
                 error: "Product not found",
             });
         }
 
-        const product = snapshot.val();
+        const product = snapshot.data();
 
         //  Delete image from storage if it exists
-        if (product.imageUrl) {
+        if (product!.imageUrl) {
             try {
-                const url = new URL(product.imageUrl);
+                const url = new URL(product!.imageUrl);
                 const encodedPath = url.pathname.split("/o/")[1]?.split("?")[0];
                 if (encodedPath) {
                     const storagePath = decodeURIComponent(encodedPath);
@@ -295,17 +299,19 @@ export const deleteProduct = async (req: Request, res: Response) => {
             }
         }
 
-        //  Delete product from database
-        await productRef.update({deleted: true});
 
         const beforeSnapshot = {
             ...product,
         };
 
-        await recordLog("product", productId, "DELETE", req.user!.uid, beforeSnapshot, null);
+        const log = await prepareLog("product", snapshot.id, "DELETE", req.user!.uid, beforeSnapshot, null);
+        await firestoreDb.runTransaction(async (transaction) => {
+            transaction.update(productRef, {deleted: true});
+            recordLog(transaction, log);
+        });
 
         return res.status(200).json({
-            message: `${product.productName} deleted successfully`,
+            message: `${product!.productName} deleted successfully`,
         });
     } catch (error) {
         console.error("DeleteProduct Error:", error);
@@ -336,22 +342,24 @@ export const addStock = async (req: Request, res: Response) => {
             return res.status(400).json({ error: "Additional stock must be a positive number" });
         }
 
-        const productRef = realtimeDb.ref(`products/${productId}`);
+        const productRef = firestoreDb.collection("products").doc(productId);
         const productSnap = await productRef.get();
 
-        if (!productSnap.exists()) {
+        if (!productSnap.exists) {
             return res.status(404).json({ error: "Product not found" });
         }
 
-        const currentProduct = productSnap.val();
-        const newStock = (parseFloat(currentProduct.stock) || 0) + parseFloat(additionalStock);
-
-        await productRef.update({ stock: newStock });
+        const currentProduct = productSnap.data();
+        const newStock = (parseFloat(currentProduct!.stock) || 0) + parseFloat(additionalStock);
 
         const beforeSnapshot = { ...currentProduct };
         const afterSnapshot = { ...currentProduct, stock: newStock };
+        const log = await prepareLog("product", productId, "UPDATE", req.user!.uid, beforeSnapshot, afterSnapshot);
 
-        await recordLog("product", productId, "UPDATE", req.user!.uid, beforeSnapshot, afterSnapshot);
+        await firestoreDb.runTransaction(async (transaction) => {
+            transaction.update(productRef, { stock: newStock });
+            recordLog(transaction, log);
+        });
 
         return res.status(200).json({ message: `Stock updated successfully. New stock: ${newStock}` });
     } catch (error) {

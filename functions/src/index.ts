@@ -4,7 +4,7 @@ import express, { Express } from "express";
 import cors from "cors";
 import routes from "@/routes";
 import { onSchedule } from "firebase-functions/v2/scheduler";
-import { firestoreDb, realtimeDb, storage } from "./config/firebaseConfig";
+import { firestoreDb, storage } from "./config/firebaseConfig";
 
 
 const app: Express = express();
@@ -25,14 +25,55 @@ export const deletePendingOrders = onSchedule(
     },
     async () => {
         try {
-            const pendingOrdersRef = realtimeDb.ref("/pendingOrders");
-            const pendingOrders = await pendingOrdersRef.get();
-            if (!pendingOrders.exists()) {
-                return;
-            }
+            let deletedCount = 0;
 
-            await pendingOrdersRef.remove();
-            console.log("All pending orders deleted at midnight.");
+            // Paginate through pending orders in batches of 500
+            const processPendingOrders = async (query: FirebaseFirestore.Query) => {
+                const snapshot = await query.get();
+
+                if (snapshot.empty) {
+                    console.log("No more pending orders to delete.");
+                    return false; // stop loop
+                }
+
+                // Use batch writes for efficiency (Firestore allows up to 500 operations per batch)
+                const batch = firestoreDb.batch();
+                let batchCount = 0;
+
+                for (const doc of snapshot.docs) {
+                    try {
+                        batch.delete(doc.ref);
+                        batchCount++;
+                        deletedCount++;
+                    } catch (err) {
+                        console.error(`Error preparing delete for pending order ${doc.id}:`, err);
+                    }
+                }
+
+                if (batchCount > 0) {
+                    await batch.commit();
+                }
+
+                // Continue with next page
+                const lastDoc = snapshot.docs[snapshot.docs.length - 1];
+                const nextQuery = firestoreDb
+                    .collection("pendingOrders")
+                    .orderBy("date")
+                    .startAfter(lastDoc)
+                    .limit(500);
+
+                return await processPendingOrders(nextQuery);
+            };
+
+            // Start first page
+            await processPendingOrders(
+                firestoreDb
+                    .collection("pendingOrders")
+                    .orderBy("date")
+                    .limit(500)
+            );
+
+            console.log(`Deleted ${deletedCount} pending orders at midnight.`);
         } catch (error) {
             console.error("Error deleting pending orders:", error);
         }
