@@ -1,4 +1,4 @@
-import { realtimeDb } from "@/config/firebaseConfig";
+import { firestoreDb } from "@/config/firebaseConfig";
 import { Request, Response } from "express";
 import { FirebaseError } from "firebase-admin";
 
@@ -10,10 +10,10 @@ export const setPendingOrderStatus = async (req: Request, res: Response) => {
         if (!transactionId || !status) {
             return res.status(400).json({error: "transactionId and status are required"});
         }
-        const pendingOrderRef = realtimeDb.ref(`pendingOrders/${transactionId}`);
+        const pendingOrderRef = firestoreDb.collection("pendingOrders").doc(`${transactionId}`);
         const pendingOrder = await pendingOrderRef.get();
 
-        if (!pendingOrder.exists()) {
+        if (!pendingOrder.exists) {
             return res.status(404).json({ error: "Pending Order does not exist" });
         }
 
@@ -47,28 +47,34 @@ export const readNewPendingOrder = async (req: Request, res: Response) => {
             return res.status(400).json({error: "transactionId and uid is required"});
         }
 
-        const pendingOrderRef = realtimeDb.ref(`pendingOrders/${transactionId}/checkedBy`);
+        const pendingOrderRef = firestoreDb.collection("pendingOrders").doc(`${transactionId}`);
 
-        const result = await pendingOrderRef.transaction((currentData) => {
-            const usersThatChecked: string[] = currentData ?? [];
+        await firestoreDb.runTransaction(async (transaction) => {
+            const pendingOrderSnap = await transaction.get(pendingOrderRef);
 
-            if (!usersThatChecked.includes(uid)) {
-                currentData = [...usersThatChecked, uid];
+            if (!pendingOrderSnap.exists) {
+                throw new Error("PENDING_ORDER_NOT_FOUND");
             }
 
-            return currentData; // commit changes
-        });
+            const pendingOrderData = pendingOrderSnap.data()!;
+            const usersThatChecked: string[] = pendingOrderData.checkedBy || [];
 
-        if (!result.committed) {
-            return res.status(404).json({ error: "Pending Order does not exist" });
-        }
+            if (!usersThatChecked.includes(uid)) {
+                const updatedCheckedBy = Array.from(new Set([...usersThatChecked, uid]));
+                transaction.update(pendingOrderRef, { checkedBy: updatedCheckedBy });
+            }
+        });
 
         return res.status(200).json({ message: "Pending order status updated" });
     } catch (error) {
         console.error("readNewPendingOrder error:", error);
 
+        if ((error as Error).message === "PENDING_ORDER_NOT_FOUND") {
+            return res.status(404).json({ error: "Pending Order does not exist" });
+        }
+
         if ((error as FirebaseError).code === "permission-denied") {
-            return res.status(403).json({ error: "You don’t have permission to update this pending order." });
+            return res.status(403).json({ error: "You don't have permission to update this pending order." });
         }
         if ((error as FirebaseError).code === "unavailable") {
             return res.status(503).json({ error: "Service temporarily unavailable. Please try again later." });

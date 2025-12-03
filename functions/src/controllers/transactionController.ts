@@ -333,6 +333,7 @@ export const deleteTransaction = async (req: Request, res: Response) => {
         const transactionRef = transactionsRef.doc(transactionId);
 
         await firestoreDb.runTransaction(async (transaction) => {
+            // Phase 1: Read all documents first (all reads must come before writes)
             const existingDoc = await transaction.get(transactionRef);
             if (!existingDoc.exists) throw new Error("TRANSACTION_NOT_FOUND");
             const existingData = existingDoc.data()!;
@@ -342,22 +343,51 @@ export const deleteTransaction = async (req: Request, res: Response) => {
             const pendingRef = pendingOrdersRef.doc(transactionId);
             const pendingSnap = await transaction.get(pendingRef);
 
-            for (const [productId, qty] of itemMap.entries()) {
+            // Read all products
+            const productRefs: FirebaseFirestore.DocumentReference[] = [];
+            const productSnaps: FirebaseFirestore.DocumentSnapshot[] = [];
+            const productIdsArray = Array.from(itemMap.keys());
+
+            for (const productId of productIdsArray) {
                 const productRef = productsRef.doc(productId);
+                productRefs.push(productRef);
                 const productSnap = await transaction.get(productRef);
+                productSnaps.push(productSnap);
+            }
+
+            // Phase 2: Validate and calculate stock changes
+            const stockUpdates: Array<{ ref: FirebaseFirestore.DocumentReference; newStock: number }> = [];
+            for (let i = 0; i < productIdsArray.length; i++) {
+                const productId = productIdsArray[i];
+                const productSnap = productSnaps[i];
+                const qty = itemMap.get(productId) || 0;
 
                 if (!productSnap.exists) throw new Error(`PRODUCT_NOT_FOUND:${productId}`);
 
                 const productData = productSnap.data()!;
                 const newStock = (productData.stock || 0) + qty;
 
-                transaction.update(productRef, { stock: newStock });
+                stockUpdates.push({
+                    ref: productRefs[i],
+                    newStock,
+                });
             }
 
+            // Phase 3: Perform all writes (all reads are now complete)
+            // Update product stocks
+            for (const update of stockUpdates) {
+                transaction.update(update.ref, { stock: update.newStock });
+            }
+
+            // Delete pending order if it exists
             if (pendingSnap.exists) {
                 transaction.delete(pendingRef);
             }
+
+            // Delete transaction document
             transaction.delete(transactionRef);
+
+            // Record activity log
             const log = await prepareLog("transaction", transactionId, "DELETE", req.user!.uid, existingData, null);
             recordLog(transaction, log);
         });
