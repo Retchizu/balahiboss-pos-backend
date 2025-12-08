@@ -1,6 +1,7 @@
 import { firestoreDb } from "@/config/firebaseConfig";
 import { Request, Response } from "express";
 import { FirebaseError } from "firebase-admin";
+import { FieldValue } from "firebase-admin/firestore";
 
 export const setPendingOrderStatus = async (req: Request, res: Response) => {
     try {
@@ -17,7 +18,7 @@ export const setPendingOrderStatus = async (req: Request, res: Response) => {
             return res.status(404).json({ error: "Pending Order does not exist" });
         }
 
-        await pendingOrderRef.update({ status });
+        await pendingOrderRef.update({ status: status, updatedAt: FieldValue.serverTimestamp() });
         return res.status(200).json({ message: "Pending order status updated" });
     } catch (error) {
         console.error("setPendingOrderStatus error:", error);

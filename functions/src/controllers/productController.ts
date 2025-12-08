@@ -6,6 +6,7 @@ import { getDownloadURL } from "firebase-admin/storage";
 import { v4 as uuidv4 } from "uuid";
 import {format} from "date-fns";
 import { FirebaseError } from "firebase-admin";
+import { FieldValue } from "firebase-admin/firestore";
 import { ZodError } from "zod";
 import Product from "@/types/Product";
 
@@ -65,6 +66,7 @@ export const addProduct = async (req: Request, res: Response) => {
                 sellPrice,
                 stock,
                 imageUrl,
+                updatedAt: FieldValue.serverTimestamp(),
             });
             recordLog(transaction, log);
         });
@@ -231,6 +233,7 @@ export const updateProduct = async (req: Request, res: Response) => {
             transaction.update(productRef, {
                 ...rest,
                 imageUrl: newImageUrl,
+                updatedAt: FieldValue.serverTimestamp(),
             });
 
             recordLog(transaction, log);
@@ -357,7 +360,7 @@ export const addStock = async (req: Request, res: Response) => {
         const log = await prepareLog("product", productId, "UPDATE", req.user!.uid, beforeSnapshot, afterSnapshot);
 
         await firestoreDb.runTransaction(async (transaction) => {
-            transaction.update(productRef, { stock: newStock });
+            transaction.update(productRef, { stock: newStock, updatedAt: FieldValue.serverTimestamp() });
             recordLog(transaction, log);
         });
 

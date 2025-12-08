@@ -5,6 +5,7 @@ import { endOfDay, startOfDay } from "date-fns";
 import { toZonedTime, fromZonedTime } from "date-fns-tz";
 import { Request, Response } from "express";
 import { FirebaseError } from "firebase-admin";
+import { FieldValue } from "firebase-admin/firestore";
 import { ZodError } from "zod";
 
 export const addTransaction = async (req: Request, res: Response) => {
@@ -71,6 +72,7 @@ export const addTransaction = async (req: Request, res: Response) => {
                     orderInformation: transactionBody.orderInformation || "",
                     status: "pending",
                     date: new Date().toISOString(),
+                    updatedAt: FieldValue.serverTimestamp(),
                 });
             }
 
@@ -268,7 +270,7 @@ export const updateTransaction = async (req: Request, res: Response) => {
             }
 
             // Update transaction document
-            transaction.update(transactionRef, transactionBody);
+            transaction.update(transactionRef, {...transactionBody, updatedAt: FieldValue.serverTimestamp()});
 
             // Update/create pending order if needed
             if (transactionBody.pending) {

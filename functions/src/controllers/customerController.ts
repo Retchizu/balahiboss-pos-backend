@@ -4,6 +4,7 @@ import recordLog, { prepareLog } from "@/utils/recordLog";
 import { customerSchema } from "@/zod-schemas/customerSchema";
 import { Request, Response } from "express";
 import { FirebaseError } from "firebase-admin";
+import { FieldValue } from "firebase-admin/firestore";
 import { ZodError } from "zod";
 
 export const addCustomer = async (req: Request, res: Response) => {
@@ -21,7 +22,7 @@ export const addCustomer = async (req: Request, res: Response) => {
                 const conflict = customer.docs.some((doc) => doc.data().deleted !== true);
                 if (conflict) throw new Error("CUSTOMER_CONFLICT");
             }
-            transaction.set(newCustomerRef, customerBody);
+            transaction.set(newCustomerRef, {...customerBody, updatedAt: FieldValue.serverTimestamp()});
             recordLog(transaction, log);
         });
 
@@ -91,7 +92,7 @@ export const updateCustomer = async (req: Request, res: Response) => {
         const afterSnapshot = { ...beforeSnapshot, ...customerBody };
         const log = await prepareLog("customer", customerId, "UPDATE", req.user!.uid, beforeSnapshot, afterSnapshot);
         await firestoreDb.runTransaction(async (transaction) => {
-            transaction.update(customerRef, customerBody);
+            transaction.update(customerRef, {...customerBody, updatedAt: FieldValue.serverTimestamp()});
             recordLog(transaction, log);
         });
 
