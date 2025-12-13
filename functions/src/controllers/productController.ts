@@ -67,6 +67,7 @@ export const addProduct = async (req: Request, res: Response) => {
                 stock,
                 imageUrl,
                 updatedAt: FieldValue.serverTimestamp(),
+                deleted: false,
             });
             recordLog(transaction, log);
         });

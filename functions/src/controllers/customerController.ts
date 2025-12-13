@@ -22,7 +22,7 @@ export const addCustomer = async (req: Request, res: Response) => {
                 const conflict = customer.docs.some((doc) => doc.data().deleted !== true);
                 if (conflict) throw new Error("CUSTOMER_CONFLICT");
             }
-            transaction.set(newCustomerRef, {...customerBody, updatedAt: FieldValue.serverTimestamp()});
+            transaction.set(newCustomerRef, {...customerBody, updatedAt: FieldValue.serverTimestamp(), deleted: false});
             recordLog(transaction, log);
         });
 
