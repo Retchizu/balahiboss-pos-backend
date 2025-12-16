@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { toPHTRange } from "@/controllers/transactionController";
+import { toPHTRange } from "@/utils/toPHTRange";
 import { firestoreDb } from "@/config/firebaseConfig";
 
 export const getActivityLogs = async (req: Request, res: Response) => {

@@ -6,6 +6,7 @@ import userRoutes from "@/routers/userRoutes";
 import pendingOrderRoutes from "@/routers/pendingOrderRoutes";
 import activityRoutes from "@/routers/activityRoutes";
 import employeeRoutes from "@/routers/employeeRoutes";
+import analyticsRoutes from "@/routers/analyticsRoutes";
 
 // eslint-disable-next-line new-cap
 const router = Router();
@@ -18,5 +19,6 @@ router.use("/user", userRoutes);
 router.use("/pending-order", pendingOrderRoutes);
 router.use("/activity", activityRoutes);
 router.use("/employee", employeeRoutes);
+router.use("/analytics", analyticsRoutes);
 
 export default router;

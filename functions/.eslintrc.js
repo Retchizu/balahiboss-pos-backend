@@ -32,5 +32,7 @@ module.exports = {
         "max-len": ["error", { code: 120 }],
         "object-curly-spacing": "off",
         "@typescript-eslint/no-non-null-assertion": "off",
+        "operator-linebreak": "off",
+        "curly": "off",
     },
 };
