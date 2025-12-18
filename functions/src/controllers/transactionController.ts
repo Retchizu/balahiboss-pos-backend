@@ -57,7 +57,7 @@ export const addTransaction = async (req: Request, res: Response) => {
             // Phase 3: Perform all writes (all reads are now complete)
             // Update product stocks
             for (const update of stockUpdates) {
-                transaction.update(update.ref, { stock: update.newStock });
+                transaction.update(update.ref, { stock: update.newStock, updatedAt: FieldValue.serverTimestamp() });
             }
 
             // Create transaction document
@@ -232,7 +232,7 @@ export const updateTransaction = async (req: Request, res: Response) => {
             // Phase 3: Perform all writes (all reads are now complete)
             // Update product stocks
             for (const update of stockUpdates) {
-                transaction.update(update.ref, { stock: update.newStock });
+                transaction.update(update.ref, { stock: update.newStock, updatedAt: FieldValue.serverTimestamp() });
             }
 
             // Update transaction document
@@ -344,7 +344,7 @@ export const deleteTransaction = async (req: Request, res: Response) => {
             // Phase 3: Perform all writes (all reads are now complete)
             // Update product stocks
             for (const update of stockUpdates) {
-                transaction.update(update.ref, { stock: update.newStock });
+                transaction.update(update.ref, { stock: update.newStock, updatedAt: FieldValue.serverTimestamp() });
             }
 
             // Delete pending order if it exists
