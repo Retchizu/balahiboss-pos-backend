@@ -7,10 +7,14 @@ import {
     deleteCategory,
     assignCategoryToProducts,
 } from "@/controllers/productCategoryController";
+import { verifyAuthToken } from "@/middleware/verifyAuthToken";
+import { verifyRole } from "@/middleware/verifyRole";
 
 
 // eslint-disable-next-line new-cap
 const router: Router = Router();
+
+router.use(verifyAuthToken, verifyRole(["admin"]));
 
 router.get("/list", getAllCategories);
 
