@@ -6,7 +6,6 @@ import routes from "@/routes";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { firestoreDb, storage } from "./config/firebaseConfig";
 
-
 const app: Express = express();
 
 app.use(cors());
@@ -15,148 +14,146 @@ app.use(express.json());
 
 app.use(routes);
 
-
 export const balahiboss = v2.https.onRequest(app);
 
 export const deletePendingOrders = onSchedule(
-    {
-        schedule: "0 0 * * *", // every day at midnight
-        timeZone: "Asia/Manila", // optional
-    },
-    async () => {
-        try {
-            let deletedCount = 0;
+  {
+    schedule: "0 0 * * *", // every day at midnight
+    timeZone: "Asia/Manila", // optional
+  },
+  async () => {
+    try {
+      let deletedCount = 0;
 
-            // Paginate through pending orders in batches of 500
-            const processPendingOrders = async (query: FirebaseFirestore.Query) => {
-                const snapshot = await query.get();
+      // Paginate through pending orders in batches of 500
+      const processPendingOrders = async (query: FirebaseFirestore.Query) => {
+        const snapshot = await query.get();
 
-                if (snapshot.empty) {
-                    console.log("No more pending orders to delete.");
-                    return false; // stop loop
-                }
-
-                // Use batch writes for efficiency (Firestore allows up to 500 operations per batch)
-                const batch = firestoreDb.batch();
-                let batchCount = 0;
-
-                for (const doc of snapshot.docs) {
-                    try {
-                        batch.delete(doc.ref);
-                        batchCount++;
-                        deletedCount++;
-                    } catch (err) {
-                        console.error(`Error preparing delete for pending order ${doc.id}:`, err);
-                    }
-                }
-
-                if (batchCount > 0) {
-                    await batch.commit();
-                }
-
-                // Continue with next page
-                const lastDoc = snapshot.docs[snapshot.docs.length - 1];
-                const nextQuery = firestoreDb
-                    .collection("pendingOrders")
-                    .orderBy("date")
-                    .startAfter(lastDoc)
-                    .limit(500);
-
-                return await processPendingOrders(nextQuery);
-            };
-
-            // Start first page
-            await processPendingOrders(
-                firestoreDb
-                    .collection("pendingOrders")
-                    .orderBy("date")
-                    .limit(500)
-            );
-
-            console.log(`Deleted ${deletedCount} pending orders at midnight.`);
-        } catch (error) {
-            console.error("Error deleting pending orders:", error);
+        if (snapshot.empty) {
+          console.log("No more pending orders to delete.");
+          return false; // stop loop
         }
+
+        // Use batch writes for efficiency (Firestore allows up to 500 operations per batch)
+        const batch = firestoreDb.batch();
+        let batchCount = 0;
+
+        for (const doc of snapshot.docs) {
+          try {
+            batch.delete(doc.ref);
+            batchCount++;
+            deletedCount++;
+          } catch (err) {
+            console.error(
+              `Error preparing delete for pending order ${doc.id}:`,
+              err
+            );
+          }
+        }
+
+        if (batchCount > 0) {
+          await batch.commit();
+        }
+
+        // Continue with next page
+        const lastDoc = snapshot.docs[snapshot.docs.length - 1];
+        const nextQuery = firestoreDb
+          .collection("pendingOrders")
+          .orderBy("date")
+          .startAfter(lastDoc)
+          .limit(500);
+
+        return await processPendingOrders(nextQuery);
+      };
+
+      // Start first page
+      await processPendingOrders(
+        firestoreDb.collection("pendingOrders").orderBy("date").limit(500)
+      );
+
+      console.log(`Deleted ${deletedCount} pending orders at midnight.`);
+    } catch (error) {
+      console.error("Error deleting pending orders:", error);
     }
+  }
 );
 
-
 export const deleteActivityLog = onSchedule(
-    {
-        schedule: "0 0 * * *", // Every midnight
-        timeZone: "Asia/Manila",
-    },
-    async () => {
-        const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000; // 30 days ago
-        const cutoffISO = new Date(cutoff).toISOString();
+  {
+    schedule: "0 0 * * *", // Every midnight
+    timeZone: "Asia/Manila",
+  },
+  async () => {
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000; // 30 days ago
+    const cutoffISO = new Date(cutoff).toISOString();
 
-        console.log(`Deleting activity logs older than: ${cutoffISO}`);
+    console.log(`Deleting activity logs older than: ${cutoffISO}`);
 
-        let deletedCount = 0;
+    let deletedCount = 0;
 
-        // Paginate through logs in batches of 500
-        const processLogs = async (query: FirebaseFirestore.Query) => {
-            const snapshot = await query.get();
+    // Paginate through logs in batches of 500
+    const processLogs = async (query: FirebaseFirestore.Query) => {
+      const snapshot = await query.get();
 
-            if (snapshot.empty) {
-                console.log("No more logs to delete.");
-                return false; // stop loop
+      if (snapshot.empty) {
+        console.log("No more logs to delete.");
+        return false; // stop loop
+      }
+
+      for (const doc of snapshot.docs) {
+        try {
+          const activity = doc.data() as {
+            id: string;
+            entity: string;
+            entityId: string;
+          };
+
+          // Delete activity log
+          await doc.ref.delete();
+          deletedCount++;
+
+          // If entity is product, clean up history images
+          if (activity.entity === "product") {
+            const prefix = `products/history/${activity.entityId}/`;
+            const [files] = await storage.getFiles({ prefix });
+
+            for (const file of files) {
+              const [metadata] = await file.getMetadata();
+              const lastUpdated = new Date(metadata.updated!).getTime();
+
+              // Delete only if file is older than cutoff
+              if (lastUpdated < cutoff) {
+                await file.delete();
+                console.log(`Deleted old file: ${file.name}`);
+              }
             }
+          }
+        } catch (err) {
+          console.error(`Error deleting log ${doc.id}:`, err);
+        }
+      }
 
-            for (const doc of snapshot.docs) {
-                try {
-                    const activity = doc.data() as {
-                        id: string;
-                        entity: string;
-                        entityId: string;
-                };
+      // Continue with next page
+      const lastDoc = snapshot.docs[snapshot.docs.length - 1];
+      const nextQuery = firestoreDb
+        .collection("activities")
+        .where("date", "<", cutoffISO)
+        .orderBy("date")
+        .startAfter(lastDoc)
+        .limit(500);
 
-                    // Delete activity log
-                    await doc.ref.delete();
-                    deletedCount++;
+      return await processLogs(nextQuery);
+    };
 
-                    // If entity is product, clean up history images
-                    if (activity.entity === "product") {
-                        const prefix = `products/history/${activity.entityId}/`;
-                        const [files] = await storage.getFiles({ prefix });
+    // Start first page
+    await processLogs(
+      firestoreDb
+        .collection("activities")
+        .where("date", "<", cutoffISO)
+        .orderBy("date")
+        .limit(500)
+    );
 
-                        for (const file of files) {
-                            const [metadata] = await file.getMetadata();
-                            const lastUpdated = new Date(metadata.updated!).getTime();
-
-                            // Delete only if file is older than cutoff
-                            if (lastUpdated < cutoff) {
-                                await file.delete();
-                                console.log(`Deleted old file: ${file.name}`);
-                            }
-                        }
-                    }
-                } catch (err) {
-                    console.error(`Error deleting log ${doc.id}:`, err);
-                }
-            }
-
-            // Continue with next page
-            const lastDoc = snapshot.docs[snapshot.docs.length - 1];
-            const nextQuery = firestoreDb
-                .collection("activities")
-                .where("date", "<", cutoffISO)
-                .orderBy("date")
-                .startAfter(lastDoc)
-                .limit(500);
-
-            return await processLogs(nextQuery);
-        };
-
-        // Start first page
-        await processLogs(
-            firestoreDb
-                .collection("activities")
-                .where("date", "<", cutoffISO)
-                .orderBy("date")
-                .limit(500)
-        );
-
-        console.log(`Deleted ${deletedCount} old activity logs.`);
-    }
+    console.log(`Deleted ${deletedCount} old activity logs.`);
+  }
 );

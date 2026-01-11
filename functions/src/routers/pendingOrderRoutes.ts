@@ -1,4 +1,4 @@
-import { readNewPendingOrder, setPendingOrderStatus } from "@/controllers/pendingOrderController";
+import { readNewPendingOrder, setPendingOrderStatus } from "@/controllers/ordersController";
 import { verifyAuthToken } from "@/middleware/verifyAuthToken";
 import { verifyRole } from "@/middleware/verifyRole";
 import { Router } from "express";

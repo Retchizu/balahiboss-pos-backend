@@ -7,7 +7,7 @@ import { Router } from "express";
 const router: Router = Router();
 
 router.post("/add", verifyAuthToken, verifyRole(["admin"]), addCustomer);
-router.get("/list", verifyAuthToken, verifyRole(["admin", "user"]), getCustomers);
+router.get("/", verifyAuthToken, verifyRole(["admin", "user"]), getCustomers);
 router.put("/update/:customerId", verifyAuthToken, verifyRole(["admin"]), updateCustomer);
 router.delete("/delete/:customerId", verifyAuthToken, verifyRole(["admin"]), deleteCustomer);
 

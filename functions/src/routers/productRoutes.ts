@@ -8,7 +8,7 @@ import { verifyRole } from "@/middleware/verifyRole";
 const router:Router = Router();
 
 router.post("/add", verifyAuthToken, verifyRole(["admin"]), addProduct);
-router.get("/list", verifyAuthToken, verifyRole(["admin", "user"]), getProducts);
+router.get("/", verifyAuthToken, verifyRole(["admin", "user"]), getProducts);
 router.put("/update/:productId", verifyAuthToken, verifyRole(["admin"]), updateProduct);
 router.patch("/add-stock/:productId", verifyAuthToken, verifyRole(["admin"]), addStock);
 router.delete("/delete/:productId", verifyAuthToken, verifyRole(["admin"]), deleteProduct);

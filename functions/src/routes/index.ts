@@ -13,13 +13,13 @@ import productCategoryRoutes from "@/routers/productCategoryRoutes";
 const router = Router();
 
 
-router.use("/product", productRoutes);
-router.use("/customer", customerRoutes);
-router.use("/transaction", transactionRoutes);
-router.use("/user", userRoutes);
-router.use("/pending-order", pendingOrderRoutes);
-router.use("/activity", activityRoutes);
-router.use("/employee", employeeRoutes);
+router.use("/products", productRoutes);
+router.use("/customers", customerRoutes);
+router.use("/transactions", transactionRoutes);
+router.use("/users", userRoutes);
+router.use("/orders", pendingOrderRoutes);
+router.use("/activities", activityRoutes);
+router.use("/employees", employeeRoutes);
 router.use("/analytics", analyticsRoutes);
 router.use("/categories", productCategoryRoutes);
 
