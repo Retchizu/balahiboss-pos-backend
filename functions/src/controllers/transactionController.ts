@@ -434,6 +434,18 @@ export const calculateTransactionSummary = async (
       typeof req.query.startDate === "string" ? req.query.startDate : undefined;
     const endDate =
       typeof req.query.endDate === "string" ? req.query.endDate : undefined;
+    const paymentFilter =
+      typeof req.query.paymentFilter === "string"
+        ? req.query.paymentFilter
+        : undefined;
+    const nameFilter =
+      typeof req.query.nameFilter === "string"
+        ? req.query.nameFilter
+        : undefined;
+    const searchQuery =
+      typeof req.query.searchQuery === "string"
+        ? req.query.searchQuery.toLowerCase()
+        : undefined;
 
     const { startIso, endIso } = toPHTRange(startDate, endDate);
     console.log(startIso, endIso);
@@ -444,6 +456,30 @@ export const calculateTransactionSummary = async (
       .where("date", "<=", endIso);
 
     const transactionSnapshot = await transactionRef.get();
+
+    // Fetch customers and products if name filter is needed
+    const customersMap = new Map<string, { customerName: string }>();
+    const productsMap = new Map<string, { productName: string }>();
+
+    if (nameFilter && searchQuery) {
+      if (nameFilter === "Customer") {
+        const customersSnapshot = await firestoreDb
+          .collection("customers")
+          .get();
+        customersSnapshot.forEach((doc) => {
+          const data = doc.data();
+          customersMap.set(doc.id, { customerName: data.customerName || "" });
+        });
+      } else if (nameFilter === "Product") {
+        const productsSnapshot = await firestoreDb
+          .collection("products")
+          .get();
+        productsSnapshot.forEach((doc) => {
+          const data = doc.data();
+          productsMap.set(doc.id, { productName: data.productName || "" });
+        });
+      }
+    }
 
     let totalPayment = 0;
     let totalCashPayment = 0;
@@ -460,6 +496,37 @@ export const calculateTransactionSummary = async (
         ...transactionSnapshot.docs[i].data(),
       } as Transaction;
 
+      // --- Payment filter ---
+      if (paymentFilter === "Cash" && (transaction.cashPayment || 0) === 0) {
+        continue;
+      }
+      if (
+        paymentFilter === "Online" &&
+        (transaction.onlinePayment || 0) === 0
+      ) {
+        continue;
+      }
+
+      // --- Name / search filter ---
+      if (nameFilter === "Customer" && searchQuery) {
+        const customer = customersMap.get(transaction.customerId);
+        if (
+          !customer ||
+          !customer.customerName.toLowerCase().includes(searchQuery)
+        ) {
+          continue;
+        }
+      } else if (nameFilter === "Product" && searchQuery) {
+        const hasMatchingProduct = transaction.items?.some((item) => {
+          const product = productsMap.get(item.productId);
+          if (!product) return false;
+          return product.productName.toLowerCase().includes(searchQuery);
+        });
+        if (!hasMatchingProduct) {
+          continue;
+        }
+      }
+
       const cashPayment = transaction.cashPayment || 0;
       const onlinePayment = transaction.onlinePayment || 0;
       const discount = transaction.discount || 0;
@@ -475,7 +542,6 @@ export const calculateTransactionSummary = async (
       let transactionProfit = 0;
 
       if (transaction.items && transaction.items.length > 0) {
-        console.log(transaction.items);
         for (let j = 0; j < transaction.items.length; j++) {
           const item = transaction.items[j];
           transactionPriceSold += item.sellPrice * item.quantity;
