@@ -1,5 +1,6 @@
 import {
   addTransaction,
+  calculateTransactionSummary,
   deleteTransaction,
   getTransactions,
   updateTransaction,
@@ -34,6 +35,13 @@ router.delete(
   verifyAuthToken,
   verifyRole(["admin"]),
   deleteTransaction
+);
+
+router.get(
+  "/summary",
+  verifyAuthToken,
+  verifyRole(["admin"]),
+  calculateTransactionSummary
 );
 
 export default router;

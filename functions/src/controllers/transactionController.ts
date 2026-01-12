@@ -1,6 +1,5 @@
 import { firestoreDb } from "@/config/firebaseConfig";
-/* import Product from "@/types/Product";
-import Transaction from "@/types/Transaction"; */
+import Transaction from "@/types/Transaction";
 import recordLog, { prepareLog } from "@/utils/recordLog";
 import { toPHTRange } from "@/utils/toPHTRange";
 import { transactionSchema } from "@/zod-schemas/transactionSchema";
@@ -426,7 +425,7 @@ export const deleteTransaction = async (req: Request, res: Response) => {
   }
 };
 
-/* export const calculateOverallTransactionSummary = async (
+export const calculateTransactionSummary = async (
   req: Request,
   res: Response
 ) => {
@@ -461,47 +460,39 @@ export const deleteTransaction = async (req: Request, res: Response) => {
         ...transactionSnapshot.docs[i].data(),
       } as Transaction;
 
-      totalCashPayment += transaction.cashPayment;
-      totalOnlinePayment += transaction.onlinePayment;
-      totalPayment += transaction.cashPayment + transaction.onlinePayment;
-      totalDiscount += transaction.discount;
-      totalFreebies += transaction.freebies;
+      const cashPayment = transaction.cashPayment || 0;
+      const onlinePayment = transaction.onlinePayment || 0;
+      const discount = transaction.discount || 0;
+      const freebies = transaction.freebies || 0;
+
+      totalCashPayment += cashPayment;
+      totalOnlinePayment += onlinePayment;
+      totalPayment += cashPayment + onlinePayment;
+      totalDiscount += discount;
+      totalFreebies += freebies;
 
       let transactionPriceSold = 0;
       let transactionProfit = 0;
 
-      for (const item of transaction.items) {
-        const productRef = firestoreDb
-          .collection("products")
-          .doc(item.productId);
-        const productSnapshot = await productRef.get();
-
-        if (!productSnapshot.exists) {
-          console.warn(`Product ${item.productId} not found for transaction ${transactionId}`);
-          continue;
+      if (transaction.items && transaction.items.length > 0) {
+        console.log(transaction.items);
+        for (let j = 0; j < transaction.items.length; j++) {
+          const item = transaction.items[j];
+          transactionPriceSold += item.sellPrice * item.quantity;
+          transactionProfit += (item.sellPrice - item.stockPrice) * item.quantity;
         }
-
-        const product = productSnapshot.data() as Product;
-        if (!product) {
-          console.warn(`Product ${item.productId} data is null for transaction ${transactionId}`);
-          continue;
-        }
-
-        transactionPriceSold += product.sellPrice * item.quantity;
-        transactionProfit += (product.sellPrice - product.stockPrice) * item.quantity;
       }
       totalPriceSold += transactionPriceSold;
-      totalProfit += transactionProfit;
+      totalProfit += transactionProfit - discount - freebies;
     }
-
     const summary = {
-      totalPayment,
-      totalOnlinePayment,
-      totalCashPayment,
-      totalDiscount,
-      totalFreebies,
-      totalPriceSold,
-      totalProfit,
+      totalPayment: Number(totalPayment.toFixed(2)),
+      totalOnlinePayment: Number(totalOnlinePayment.toFixed(2)),
+      totalCashPayment: Number(totalCashPayment.toFixed(2)),
+      totalDiscount: Number(totalDiscount.toFixed(2)),
+      totalFreebies: Number(totalFreebies.toFixed(2)),
+      totalPriceSold: Number(totalPriceSold.toFixed(2)),
+      totalProfit: Number(totalProfit.toFixed(2)),
     };
 
     return res.status(200).json(summary);
@@ -512,4 +503,4 @@ export const deleteTransaction = async (req: Request, res: Response) => {
     });
   }
 };
- */
+

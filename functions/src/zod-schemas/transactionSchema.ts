@@ -3,6 +3,9 @@ import { object, string, number, array, boolean } from "zod";
 const productTransactionSchema = object({
   productId: string().min(1, { message: "Product ID is required" }),
   quantity: number().min(0.5, { message: "Quantity is required" }),
+  productName: string().min(1, { message: "Product name is required" }),
+  stockPrice: number().min(0, { message: "Stock price cannot be negative" }),
+  sellPrice: number().min(0, { message: "Sell price cannot be negative" }),
 });
 
 export const transactionSchema = object({
